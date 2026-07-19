@@ -6,3 +6,4 @@ pub mod http;
 pub mod identity;
 pub mod nostr_event;
 pub mod tracing_setup;
+pub mod wallet;
