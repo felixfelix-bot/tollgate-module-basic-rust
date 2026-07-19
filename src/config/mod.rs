@@ -42,7 +42,9 @@ pub fn load_config() -> Result<Option<Config>, String> {
 pub fn load_config_from(path: &std::path::Path) -> Result<Option<Config>, String> {
     match std::fs::read(path) {
         Ok(data) if data.is_empty() => Ok(None),
-        Ok(data) => serde_json::from_slice(&data).map(Some).map_err(|e| e.to_string()),
+        Ok(data) => serde_json::from_slice(&data)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -53,7 +55,9 @@ pub fn load_identities() -> Result<Option<IdentitiesConfig>, String> {
     let path = identities_path();
     match std::fs::read(&path) {
         Ok(data) if data.is_empty() => Ok(None),
-        Ok(data) => serde_json::from_slice(&data).map(Some).map_err(|e| e.to_string()),
+        Ok(data) => serde_json::from_slice(&data)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.to_string()),
     }
@@ -64,7 +68,9 @@ pub fn load_install() -> Result<Option<InstallConfig>, String> {
     let path = install_path();
     match std::fs::read(&path) {
         Ok(data) if data.is_empty() => Ok(None),
-        Ok(data) => serde_json::from_slice(&data).map(Some).map_err(|e| e.to_string()),
+        Ok(data) => serde_json::from_slice(&data)
+            .map(Some)
+            .map_err(|e| e.to_string()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.to_string()),
     }

@@ -5,7 +5,6 @@
 
 use crate::config::schema::{IdentitiesConfig, OwnedIdentity};
 use secp256k1::{Secp256k1, SecretKey};
-use serde::{Deserialize, Serialize};
 
 /// A Nostr keypair for event signing.
 #[derive(Debug, Clone)]
@@ -20,7 +19,11 @@ impl MerchantIdentity {
         let identities = crate::config::load_identities();
 
         if let Ok(Some(config)) = identities {
-            if let Some(owned) = config.owned_identities.iter().find(|o| o.name == "merchant") {
+            if let Some(owned) = config
+                .owned_identities
+                .iter()
+                .find(|o| o.name == "merchant")
+            {
                 let secret_key = SecretKey::from_str(&owned.privatekey)
                     .map_err(|e| format!("invalid merchant private key: {e}"))?;
                 return Ok(MerchantIdentity {

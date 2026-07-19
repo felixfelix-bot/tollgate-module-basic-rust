@@ -3,10 +3,10 @@
 //! Minimal implementation: creates and signs NIP-01 events using secp256k1.
 //! Only what we need for kind 10021 discovery events in Phase 1.
 
-use secp256k1::{Secp256k1, SecretKey, Keypair, Message};
-use serde::{Serialize, Deserialize};
-use sha2::{Sha256, Digest};
 use hex;
+use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 /// A Nostr event (NIP-01).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,14 +38,7 @@ pub fn create_event(
         .as_secs();
 
     // Compute event ID = SHA256 of serialized array: [0, pubkey, created_at, kind, tags, content]
-    let id_array = serde_json::json!([
-        0,
-        pubkey_hex,
-        created_at,
-        kind,
-        tags,
-        content
-    ]);
+    let id_array = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
     let id_str = serde_json::to_string(&id_array).unwrap_or_default();
     let id_hash = Sha256::digest(id_str.as_bytes());
     let id = hex::encode(id_hash);

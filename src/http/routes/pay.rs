@@ -3,10 +3,10 @@
 //! Accepts text/plain (cashu token) or application/json (Nostr kind 21000).
 //! Phase 2-3 implements real verification + wallet logic.
 
-use axum::extract::State;
-use axum::response::IntoResponse;
-use axum::http::{StatusCode, HeaderMap};
 use crate::http::AppState;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
 
 pub async fn handle_pay(
     State(_state): State<AppState>,
@@ -25,14 +25,20 @@ pub async fn handle_pay(
     } else {
         return (
             StatusCode::UNSUPPORTED_MEDIA_TYPE,
-            [("content-type", "text/plain"), ("access-control-allow-origin", "*")],
+            [
+                ("content-type", "text/plain"),
+                ("access-control-allow-origin", "*"),
+            ],
             "unsupported content-type",
         );
     }
 
     (
         StatusCode::NOT_IMPLEMENTED,
-        [("content-type", "application/json"), ("access-control-allow-origin", "*")],
+        [
+            ("content-type", "application/json"),
+            ("access-control-allow-origin", "*"),
+        ],
         r#"{"error":"payment not yet implemented"}"#,
     )
 }

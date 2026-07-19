@@ -4,7 +4,6 @@
 //! binary. Field names, casing, and `omitempty` behavior must match.
 
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 // ── Main Config ──────────────────────────────────────────────────────
 
@@ -61,10 +60,22 @@ impl Config {
             log_level: "info".to_string(),
             accepted_mints: vec![MintConfig::default_production("https://mint.coinos.io")],
             profit_share: vec![
-                ProfitShareConfig { factor: 0.79, identity: "owner".to_string() },
-                ProfitShareConfig { factor: 0.07, identity: "c08r4d0r".to_string() },
-                ProfitShareConfig { factor: 0.07, identity: "amperstrand".to_string() },
-                ProfitShareConfig { factor: 0.07, identity: "origami74".to_string() },
+                ProfitShareConfig {
+                    factor: 0.79,
+                    identity: "owner".to_string(),
+                },
+                ProfitShareConfig {
+                    factor: 0.07,
+                    identity: "c08r4d0r".to_string(),
+                },
+                ProfitShareConfig {
+                    factor: 0.07,
+                    identity: "amperstrand".to_string(),
+                },
+                ProfitShareConfig {
+                    factor: 0.07,
+                    identity: "origami74".to_string(),
+                },
             ],
             step_size: 22020096, // 21 MiB
             margin: Some(0.1),
@@ -117,8 +128,12 @@ pub struct MintConfig {
     pub min_purchase_steps: u64,
 }
 
-fn default_price_per_step() -> u64 { 1 }
-fn default_price_unit() -> String { "sats".to_string() }
+fn default_price_per_step() -> u64 {
+    1
+}
+fn default_price_unit() -> String {
+    "sats".to_string()
+}
 
 impl MintConfig {
     pub fn default_production(url: &str) -> Self {
@@ -165,13 +180,26 @@ pub struct UpstreamDetectorConfig {
     pub discovery_timeout: String,
 }
 
-fn default_probe_timeout() -> String { "10s".to_string() }
-fn default_probe_retry_count() -> i32 { 3 }
-fn default_probe_retry_delay() -> String { "2s".to_string() }
-fn default_ignore_interfaces() -> Vec<String> {
-    vec!["lo".into(), "docker0".into(), "br-lan".into(), "hostap0".into()]
+fn default_probe_timeout() -> String {
+    "10s".to_string()
 }
-fn default_discovery_timeout() -> String { "5m0s".to_string() }
+fn default_probe_retry_count() -> i32 {
+    3
+}
+fn default_probe_retry_delay() -> String {
+    "2s".to_string()
+}
+fn default_ignore_interfaces() -> Vec<String> {
+    vec![
+        "lo".into(),
+        "docker0".into(),
+        "br-lan".into(),
+        "hostap0".into(),
+    ]
+}
+fn default_discovery_timeout() -> String {
+    "5m0s".to_string()
+}
 
 impl Default for UpstreamDetectorConfig {
     fn default() -> Self {
@@ -225,7 +253,9 @@ pub struct TrustConfig {
     pub blocklist: Vec<String>,
 }
 
-fn default_trust_policy() -> String { "trust_all".to_string() }
+fn default_trust_policy() -> String {
+    "trust_all".to_string()
+}
 
 impl Default for TrustConfig {
     fn default() -> Self {
@@ -249,10 +279,18 @@ pub struct SessionConfig {
     pub bytes_renewal_offset: u64,
 }
 
-fn default_session_inc_ms() -> u64 { 60000 }
-fn default_session_inc_bytes() -> u64 { 131100000 }
-fn default_ms_renewal_offset() -> u64 { 10000 }
-fn default_bytes_renewal_offset() -> u64 { 131100000 }
+fn default_session_inc_ms() -> u64 {
+    60000
+}
+fn default_session_inc_bytes() -> u64 {
+    131100000
+}
+fn default_ms_renewal_offset() -> u64 {
+    10000
+}
+fn default_bytes_renewal_offset() -> u64 {
+    131100000
+}
 
 impl Default for SessionConfig {
     fn default() -> Self {
@@ -271,7 +309,9 @@ pub struct UsageTrackingConfig {
     pub data_monitoring_interval: String,
 }
 
-fn default_data_monitor_interval() -> String { "0.5s".to_string() }
+fn default_data_monitor_interval() -> String {
+    "0.5s".to_string()
+}
 
 impl Default for UsageTrackingConfig {
     fn default() -> Self {
@@ -313,19 +353,45 @@ pub struct UpstreamWifiConfig {
     pub manual_pause_seconds: i32,
 }
 
-fn default_scan_interval() -> i32 { 300 }
-fn default_fast_check() -> i32 { 30 }
-fn default_lost_threshold() -> i32 { 2 }
-fn default_hysteresis_db() -> i32 { 12 }
-fn default_signal_floor() -> i32 { -85 }
-fn default_blacklist_ttl() -> i32 { 60 }
-fn default_emergency_penalty() -> i32 { 20 }
-fn default_max_failures() -> i32 { 3 }
-fn default_switch_cooldown() -> i32 { 10 }
-fn default_startup_grace() -> i32 { 90 }
-fn default_post_switch_wait() -> i32 { 5 }
-fn default_dhcp_timeout() -> i32 { 180 }
-fn default_manual_pause() -> i32 { 120 }
+fn default_scan_interval() -> i32 {
+    300
+}
+fn default_fast_check() -> i32 {
+    30
+}
+fn default_lost_threshold() -> i32 {
+    2
+}
+fn default_hysteresis_db() -> i32 {
+    12
+}
+fn default_signal_floor() -> i32 {
+    -85
+}
+fn default_blacklist_ttl() -> i32 {
+    60
+}
+fn default_emergency_penalty() -> i32 {
+    20
+}
+fn default_max_failures() -> i32 {
+    3
+}
+fn default_switch_cooldown() -> i32 {
+    10
+}
+fn default_startup_grace() -> i32 {
+    90
+}
+fn default_post_switch_wait() -> i32 {
+    5
+}
+fn default_dhcp_timeout() -> i32 {
+    180
+}
+fn default_manual_pause() -> i32 {
+    120
+}
 
 impl Default for UpstreamWifiConfig {
     fn default() -> Self {

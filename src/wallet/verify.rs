@@ -3,8 +3,8 @@
 //! Ported from tollgate-rs/crates/tollgate-net/src/wallet.rs (BootstrapWallet).
 //! Read-only: verifies proofs are unspent at the mint. No spending/receiving.
 
-use std::collections::HashSet;
 use cashu::nuts::Token;
+use std::collections::HashSet;
 
 /// TLS 1.2 hard-pinned HTTP client (matches Go behavior — Go audit §2.4).
 fn build_http_client() -> reqwest::Client {
@@ -33,9 +33,13 @@ impl TokenVerifier {
 
     /// Parse and verify a Cashu token. Returns amount in milli-sat.
     pub async fn verify(&self, token_str: &str) -> Result<u64, String> {
-        let token: Token = token_str.parse().map_err(|e| format!("invalid Cashu token: {e}"))?;
+        let token: Token = token_str
+            .parse()
+            .map_err(|e| format!("invalid Cashu token: {e}"))?;
 
-        let mint_url = token.mint_url().map_err(|e| format!("token has no mint URL: {e}"))?;
+        let mint_url = token
+            .mint_url()
+            .map_err(|e| format!("token has no mint URL: {e}"))?;
         let mint_url_str = mint_url.to_string();
         let mint_base = mint_url_str.trim_end_matches('/').to_string();
 
@@ -46,7 +50,8 @@ impl TokenVerifier {
             return Err(format!("mint {} not accepted", mint_url_str));
         }
 
-        let amount_sat: u64 = token.value()
+        let amount_sat: u64 = token
+            .value()
             .map_err(|e| format!("could not sum token value: {e}"))?
             .into();
 
@@ -127,7 +132,7 @@ mod tests {
         let token: Token = SAMPLE_TOKEN.parse().expect("valid cashuB token");
         let amount_sat: u64 = token.value().expect("has value").into();
         assert_eq!(amount_sat, 1);
-        let mint = token.mint_url().expect("has mint URL").to_string();
+        let _mint = token.mint_url().expect("has mint URL").to_string();
     }
 
     #[test]

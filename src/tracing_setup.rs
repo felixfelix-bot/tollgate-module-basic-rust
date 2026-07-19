@@ -9,8 +9,7 @@ use tracing_subscriber::EnvFilter;
 ///
 /// Call once at startup. ANSI colors are auto-disabled on non-TTY.
 pub fn init() {
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
         .with_env_filter(filter)

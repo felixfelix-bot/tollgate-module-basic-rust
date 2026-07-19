@@ -1,9 +1,7 @@
 //! tollgate-module-basic-rust — main entry point.
 
 use std::sync::Arc;
-use tollgate_module_basic_rust::{
-    cli, config, http, identity, tracing_setup,
-};
+use tollgate_module_basic_rust::{cli, config, http, identity, tracing_setup};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -15,9 +13,7 @@ async fn main() {
     tracing::info!("RunInitialProbe: tollgate-module-basic-rust v{VERSION} starting");
 
     // Load config
-    let config_obj = config::load_config()
-        .unwrap_or(None)
-        .unwrap_or_default();
+    let config_obj = config::load_config().unwrap_or(None).unwrap_or_default();
     tracing::info!(
         metric = %config_obj.metric,
         mints = config_obj.accepted_mints.len(),
@@ -43,9 +39,7 @@ async fn main() {
             .await
             .expect("failed to bind 127.0.0.1:2121");
         tracing::info!("HTTP server listening on 127.0.0.1:2121");
-        axum::serve(listener, app)
-            .await
-            .expect("HTTP server error");
+        axum::serve(listener, app).await.expect("HTTP server error");
     });
 
     let cli_handle = tokio::spawn(async move {

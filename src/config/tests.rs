@@ -4,11 +4,13 @@
 //! schemas so the same `/etc/tollgate/*.json` files load without modification.
 
 use super::schema::{
-    Config, IdentitiesConfig, InstallConfig, MintConfig, OwnedIdentity, ProfitShareConfig,
-    PublicIdentity, UpstreamDetectorConfig, UpstreamSessionManagerConfig, UpstreamWifiConfig,
+    Config, MintConfig, OwnedIdentity, ProfitShareConfig, PublicIdentity, UpstreamDetectorConfig,
+    UpstreamSessionManagerConfig, UpstreamWifiConfig,
 };
-use super::{config_dir, config_path, identities_path, install_path, load_config,
-            load_identities, load_install};
+use super::{
+    config_dir, config_path, identities_path, install_path, load_config, load_identities,
+    load_install,
+};
 use std::fs;
 
 const PRODUCTION_CONFIG_JSON: &str = r#"{
@@ -99,7 +101,11 @@ fn rand_hex() -> String {
 }
 
 fn with_test_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("tollgate-test-{}-{}", std::process::id(), rand_hex()));
+    let dir = std::env::temp_dir().join(format!(
+        "tollgate-test-{}-{}",
+        std::process::id(),
+        rand_hex()
+    ));
     fs::create_dir_all(&dir).expect("create test dir");
     for (name, contents) in files {
         fs::write(dir.join(name), contents).expect("write file");
@@ -111,9 +117,18 @@ fn with_test_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
 #[test]
 fn default_config_path_is_etc_tollgate() {
     std::env::remove_var("TOLLGATE_TEST_CONFIG_DIR");
-    assert_eq!(config_path(), std::path::Path::new("/etc/tollgate/config.json"));
-    assert_eq!(install_path(), std::path::Path::new("/etc/tollgate/install.json"));
-    assert_eq!(identities_path(), std::path::Path::new("/etc/tollgate/identities.json"));
+    assert_eq!(
+        config_path(),
+        std::path::Path::new("/etc/tollgate/config.json")
+    );
+    assert_eq!(
+        install_path(),
+        std::path::Path::new("/etc/tollgate/install.json")
+    );
+    assert_eq!(
+        identities_path(),
+        std::path::Path::new("/etc/tollgate/identities.json")
+    );
 }
 
 #[test]
@@ -148,7 +163,9 @@ fn loads_full_production_config() {
         ("install.json", INSTALL_JSON),
     ]);
 
-    let cfg = load_config().expect("config should load").expect("config should be Some");
+    let cfg = load_config()
+        .expect("config should load")
+        .expect("config should be Some");
 
     assert_eq!(cfg.config_version, "v0.0.8");
     assert_eq!(cfg.log_level, "info");
@@ -170,18 +187,36 @@ fn loads_full_production_config() {
     assert_eq!(m.min_purchase_steps, 0);
 
     assert_eq!(cfg.profit_share.len(), 2);
-    assert_eq!(cfg.profit_share[0], ProfitShareConfig { factor: 0.79, identity: "owner".into() });
-    assert_eq!(cfg.profit_share[1], ProfitShareConfig { factor: 0.21, identity: "c08r4d0r".into() });
+    assert_eq!(
+        cfg.profit_share[0],
+        ProfitShareConfig {
+            factor: 0.79,
+            identity: "owner".into()
+        }
+    );
+    assert_eq!(
+        cfg.profit_share[1],
+        ProfitShareConfig {
+            factor: 0.21,
+            identity: "c08r4d0r".into()
+        }
+    );
 
     assert_eq!(cfg.upstream_detector.probe_timeout, "10s");
     assert_eq!(cfg.upstream_detector.probe_retry_count, 3);
-    assert_eq!(cfg.upstream_detector.require_valid_signature, true);
-    assert_eq!(cfg.upstream_detector.ignore_interfaces, vec!["lo", "docker0", "br-lan", "hostap0"]);
+    assert!(cfg.upstream_detector.require_valid_signature);
+    assert_eq!(
+        cfg.upstream_detector.ignore_interfaces,
+        vec!["lo", "docker0", "br-lan", "hostap0"]
+    );
 
     let usm: &UpstreamSessionManagerConfig = &cfg.upstream_session_manager;
     assert!((usm.max_price_per_millisecond - 0.002777777778).abs() < 1e-12);
     assert_eq!(usm.trust.default_policy, "trust_all");
-    assert_eq!(usm.sessions.preferred_session_increments_milliseconds, 60000);
+    assert_eq!(
+        usm.sessions.preferred_session_increments_milliseconds,
+        60000
+    );
     assert_eq!(usm.usage_tracking.data_monitoring_interval, "500ms");
 
     let wifi: &UpstreamWifiConfig = &cfg.upstream_wifi;
@@ -222,16 +257,27 @@ fn empty_config_file_returns_none() {
 #[test]
 fn loads_identities() {
     with_test_dir(&[("identities.json", IDENTITIES_JSON)]);
-    let ids = load_identities().expect("identities should load").expect("Some");
+    let ids = load_identities()
+        .expect("identities should load")
+        .expect("Some");
     assert_eq!(ids.config_version, "v0.0.1");
     assert_eq!(ids.owned_identities.len(), 1);
-    assert_eq!(ids.owned_identities[0],
-               OwnedIdentity { name: "merchant".into(),
-                               privatekey: "0000000000000000000000000000000000000000000000000000000000000001".into() });
+    assert_eq!(
+        ids.owned_identities[0],
+        OwnedIdentity {
+            name: "merchant".into(),
+            privatekey: "0000000000000000000000000000000000000000000000000000000000000001".into()
+        }
+    );
     assert_eq!(ids.public_identities.len(), 1);
-    assert_eq!(ids.public_identities[0],
-               PublicIdentity { name: "owner".into(), pubkey: Some("abc".into()),
-                                lightning_address: Some("owner@example.com".into()) });
+    assert_eq!(
+        ids.public_identities[0],
+        PublicIdentity {
+            name: "owner".into(),
+            pubkey: Some("abc".into()),
+            lightning_address: Some("owner@example.com".into())
+        }
+    );
 }
 
 #[test]

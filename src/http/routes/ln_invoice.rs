@@ -1,11 +1,11 @@
 //! POST /ln-invoice — create LN invoice (stub)
 //! GET /ln-invoice?quote=<id> — poll invoice status (stub)
 
-use axum::extract::{State, Query};
-use axum::response::IntoResponse;
-use axum::http::StatusCode;
-use serde::{Serialize, Deserialize};
 use crate::http::AppState;
+use axum::extract::{Query, State};
+use axum::http::StatusCode;
+use axum::response::IntoResponse;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize)]
 pub struct CreateInvoiceRequest {
@@ -46,7 +46,14 @@ pub async fn handle_create_ln_invoice(
         pubkey: "stub-pubkey".to_string(),
     };
     let json = serde_json::to_string(&resp).unwrap_or_default();
-    (StatusCode::OK, [("content-type", "application/json"), ("access-control-allow-origin", "*")], json)
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("access-control-allow-origin", "*"),
+        ],
+        json,
+    )
 }
 
 pub async fn handle_get_ln_invoice(
@@ -60,5 +67,12 @@ pub async fn handle_get_ln_invoice(
         expiry: 0,
     };
     let json = serde_json::to_string(&resp).unwrap_or_default();
-    (StatusCode::OK, [("content-type", "application/json"), ("access-control-allow-origin", "*")], json)
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("access-control-allow-origin", "*"),
+        ],
+        json,
+    )
 }

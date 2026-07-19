@@ -98,21 +98,37 @@ async fn handle_connection(stream: tokio::net::UnixStream) {
 fn handle_command(cmd: &str) -> String {
     match cmd {
         "version" => version_string(),
-        "status" => serde_json::json!({
-            "success": true,
-            "message": "running"
-        }).to_string() + "\n",
-        "wallet info" => serde_json::json!({
-            "success": true,
-            "message": "no wallet configured yet"
-        }).to_string() + "\n",
-        "wallet balance" => serde_json::json!({
-            "success": true,
-            "message": "0"
-        }).to_string() + "\n",
-        _ => serde_json::json!({
-            "success": false,
-            "error": format!("unknown command: {cmd}")
-        }).to_string() + "\n",
+        "status" => {
+            serde_json::json!({
+                "success": true,
+                "message": "running"
+            })
+            .to_string()
+                + "\n"
+        }
+        "wallet info" => {
+            serde_json::json!({
+                "success": true,
+                "message": "no wallet configured yet"
+            })
+            .to_string()
+                + "\n"
+        }
+        "wallet balance" => {
+            serde_json::json!({
+                "success": true,
+                "message": "0"
+            })
+            .to_string()
+                + "\n"
+        }
+        _ => {
+            serde_json::json!({
+                "success": false,
+                "error": format!("unknown command: {cmd}")
+            })
+            .to_string()
+                + "\n"
+        }
     }
 }
