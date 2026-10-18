@@ -26,11 +26,11 @@ tower-http = { version = "0.6", features = ["cors", "timeout", "trace"] }
 http-body-util = "0.1"
 
 # Cashu Development Kit (wallet side — we are a wallet talking to mints)
-cdk = { version = "0.17", default-features = false, features = ["wallet"] }
-cdk-sqlite = "0.17"
+cdk = { version = "0.18", default-features = false, features = ["wallet"] }
+cdk-sqlite = "0.18"
 
 # Cashu protocol primitives (Token parsing, NUT types)
-cashu = "0.17"
+cashu = "0.18"
 
 # Serde / JSON
 serde = { version = "1", features = ["derive"] }
