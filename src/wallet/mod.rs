@@ -38,3 +38,6 @@ pub mod verify;
 pub mod wallet;
 
 pub use wallet::TollWallet;
+
+#[cfg(test)]
+mod per_mint_test;
