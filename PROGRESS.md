@@ -15,3 +15,4 @@ P1 | sessions/quotes were in-memory: restart lost every paid session and every u
 P2 | runner reported verify/spend UNVERIFIED even with a mint; no live lane existed | DONE (mint reachable + NUT-07 detected; per-fixture proof check needs V4 CBOR) | ci/mint_probe.py, ci/test_mint_probe.py, ci/conformance_runner.py, conformance/verdicts.json
 REMEASURE | corpus KG twins regenerated from a reachable mint (tollgate#47); verify/spend became measurable | PASS 13->15, UNVERIFIED 14->12 | conformance/verdicts.json, REPORT.md
 ADR-0002 | usage counter paid a fsync per metering tick (money rule applied to a cache) | DONE (5s OR 5% OR terminal flush) | src/session/{mod,store,usage_batching_test}.rs
+P3 | /ln-invoice invented quote ids and returned an empty request, so no client could pay | DONE (real BOLT11 from the mint) | src/http/routes/{ln_invoice,ln_invoice_live_test}.rs, src/wallet/wallet.rs
