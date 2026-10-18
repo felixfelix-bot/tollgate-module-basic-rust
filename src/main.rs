@@ -113,10 +113,15 @@ async fn main() {
     let http_state = state.clone();
     let http_handle = tokio::spawn(async move {
         let app = http::create_router((*http_state).clone());
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:2121")
+        // A8: the bind address is overridable so a conformance runner can drive
+        // the real binary on an ephemeral port. The default remains the
+        // protocol's :2121 on every interface, because a captive portal bound to
+        // loopback cannot be reached by any LAN client.
+        let bind = std::env::var("TOLLGATE_BIND").unwrap_or_else(|_| "0.0.0.0:2121".to_string());
+        let listener = tokio::net::TcpListener::bind(&bind)
             .await
-            .expect("failed to bind 0.0.0.0:2121");
-        tracing::info!("HTTP server listening on 0.0.0.0:2121");
+            .unwrap_or_else(|e| panic!("failed to bind {bind}: {e}"));
+        tracing::info!(bind = %bind, "HTTP server listening");
         axum::serve(listener, app).await.expect("HTTP server error");
     });
 

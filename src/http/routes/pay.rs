@@ -10,6 +10,18 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
+/// The mint a token came from, parsed without any network call.
+fn verifier_token_mint(token: &str) -> Result<String, String> {
+    use cashu::nuts::Token;
+    let t: Token = token
+        .parse()
+        .map_err(|e| format!("invalid Cashu token: {e}"))?;
+    let url = t
+        .mint_url()
+        .map_err(|e| format!("token has no mint URL: {e}"))?;
+    Ok(url.to_string().trim_end_matches('/').to_string())
+}
+
 /// Extract a Cashu token from a Nostr kind 21000 event JSON body.
 /// Looks for a tag ["payment", "<token>"].
 fn extract_token_from_nostr_event(body: &str) -> Option<String> {
@@ -196,6 +208,35 @@ pub async fn handle_pay(
         );
     };
 
+    // A6/A8: decide whether this token's mint is acceptable BEFORE any network
+    // call. `verify()` performs a NUT-07 checkstate round trip, so checking the
+    // allowlist afterwards meant a token from an unaccepted mint cost a full
+    // mint timeout (30 s) before being refused — and a token whose mint was
+    // simply unreachable hung the request. Cheap checks first.
+    let mint = match verifier_token_mint(&token)
+        .and_then(|m| {
+            crate::http::routes::select::select_mint_for_token(&state.config, &m)
+                .map_err(|e| format!("{e:?}"))
+        }) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "payment rejected before mint contact");
+            let json = notice_json(
+                &state.identity,
+                "payment-error-mint-not-accepted",
+                &format!("payment rejected: {e}"),
+            );
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                [
+                    ("content-type", "application/json"),
+                    ("access-control-allow-origin", "*"),
+                ],
+                json,
+            );
+        }
+    };
+
     // Step 1: verify token via NUT-07 checkstate
     let mints: Vec<String> = state
         .config
@@ -311,50 +352,6 @@ pub async fn handle_pay(
     // satoshi -> millisatoshi conversion. A payment that does not cover one
     // whole step grants nothing and is refused rather than silently granted an
     // allotment unrelated to the price.
-    // A6: price the payment from the mint the token ACTUALLY came from.
-    //
-    // Pre-A6 this was `accepted_mints.first()`, so with more than one mint
-    // configured a token from the second mint was priced using the FIRST mint's
-    // table. `verify()` has already parsed the token, so ask it which mint.
-    let mint = match verifier.token_mint(&token) {
-        Ok(mint_url) => {
-            match crate::http::routes::select::select_mint_for_token(&state.config, &mint_url) {
-                Ok(m) => m,
-                Err(e) => {
-                    tracing::warn!(error = ?e, "payment rejected: mint not usable");
-                    let json = notice_json(
-                        &state.identity,
-                        "payment-error-mint-not-accepted",
-                        &format!("payment rejected: {e:?}"),
-                    );
-                    return (
-                        StatusCode::PAYMENT_REQUIRED,
-                        [
-                            ("content-type", "application/json"),
-                            ("access-control-allow-origin", "*"),
-                        ],
-                        json,
-                    );
-                }
-            }
-        }
-        Err(e) => {
-            let json = notice_json(
-                &state.identity,
-                "payment-error-token-spent",
-                &format!("payment rejected: {e}"),
-            );
-            return (
-                StatusCode::PAYMENT_REQUIRED,
-                [
-                    ("content-type", "application/json"),
-                    ("access-control-allow-origin", "*"),
-                ],
-                json,
-            );
-        }
-    };
-
     let allotment = match calculate_allotment(
         received_amount,
         mint.price_per_step,
