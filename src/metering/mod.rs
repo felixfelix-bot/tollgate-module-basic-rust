@@ -59,5 +59,48 @@ pub async fn poll_usage(mac: &str) -> Result<(u64, u64), MeteringError> {
     parse_ndsctl_output(&stdout)
 }
 
+/// A usage reading plus its provenance.
+///
+/// `live` distinguishes "the enforcement daemon said so" from "the stored
+/// counter is the best we have". They are different claims and `/usage` must not
+/// present them as the same thing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UsageReading {
+    pub used: u64,
+    pub live: bool,
+}
+
+/// Poll usage using a caller-supplied `ndsctl` path.
+///
+/// Absence or failure is an `Err`, never a zero: reporting `used = 0` for a
+/// client the daemon does not know is indistinguishable from a client that has
+/// genuinely transferred nothing, and it hides a broken enforcement path.
+pub async fn poll_usage_with(
+    ndsctl: impl AsRef<std::path::Path>,
+    mac: &str,
+) -> Result<UsageReading, MeteringError> {
+    let output = tokio::process::Command::new(ndsctl.as_ref())
+        .args(["state", mac])
+        .output()
+        .await
+        .map_err(|e| MeteringError::NotFound(e.to_string()))?;
+
+    if !output.status.success() {
+        return Err(MeteringError::ExecutionFailed(
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        ));
+    }
+
+    let (used, _total) = parse_ndsctl_output(&String::from_utf8_lossy(&output.stdout))?;
+    Ok(UsageReading { used, live: true })
+}
+
+/// Poll using the router's `ndsctl`.
+pub async fn poll_usage_reading(mac: &str) -> Result<UsageReading, MeteringError> {
+    poll_usage_with("ndsctl", mac).await
+}
+
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod wiring_test;
