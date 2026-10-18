@@ -274,6 +274,27 @@ impl TollWallet {
         }
     }
 
+    /// The mint a request should be issued against when the caller does not name one.
+    ///
+    /// Single-mint deployments are the normal case, so this returns the sole configured
+    /// mint. Rather than pick arbitrarily when several are configured (which would make
+    /// a customer's invoice come from a mint they did not expect), it returns `None` and
+    /// the caller must name a mint explicitly.
+    pub fn default_mint(&self) -> Option<&str> {
+        if self.wallets.len() == 1 {
+            self.wallets.keys().next().map(|s| s.as_str())
+        } else {
+            None
+        }
+    }
+
+    /// Every configured mint URL, sorted for deterministic output.
+    pub fn mint_urls(&self) -> Vec<String> {
+        let mut v: Vec<String> = self.wallets.keys().cloned().collect();
+        v.sort();
+        v
+    }
+
     /// Check mint quote status (maps gonuts `MintQuoteState`).
     pub async fn check_mint_quote(
         &self,

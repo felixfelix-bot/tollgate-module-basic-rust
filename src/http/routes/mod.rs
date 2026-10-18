@@ -20,3 +20,6 @@ pub mod select;
 mod select_test;
 pub mod usage;
 pub mod whoami;
+
+#[cfg(test)]
+mod ln_invoice_live_test;
