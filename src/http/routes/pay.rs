@@ -311,22 +311,41 @@ pub async fn handle_pay(
     // satoshi -> millisatoshi conversion. A payment that does not cover one
     // whole step grants nothing and is refused rather than silently granted an
     // allotment unrelated to the price.
-    let mint = state
-        .config
-        .accepted_mints
-        .first()
-        .cloned()
-        .ok_or_else(|| "no accepted mints configured".to_string());
-    let mint = match mint {
-        Ok(m) => m,
+    // A6: price the payment from the mint the token ACTUALLY came from.
+    //
+    // Pre-A6 this was `accepted_mints.first()`, so with more than one mint
+    // configured a token from the second mint was priced using the FIRST mint's
+    // table. `verify()` has already parsed the token, so ask it which mint.
+    let mint = match verifier.token_mint(&token) {
+        Ok(mint_url) => {
+            match crate::http::routes::select::select_mint_for_token(&state.config, &mint_url) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(error = ?e, "payment rejected: mint not usable");
+                    let json = notice_json(
+                        &state.identity,
+                        "payment-error-mint-not-accepted",
+                        &format!("payment rejected: {e:?}"),
+                    );
+                    return (
+                        StatusCode::PAYMENT_REQUIRED,
+                        [
+                            ("content-type", "application/json"),
+                            ("access-control-allow-origin", "*"),
+                        ],
+                        json,
+                    );
+                }
+            }
+        }
         Err(e) => {
             let json = notice_json(
                 &state.identity,
-                "session-error",
+                "payment-error-token-spent",
                 &format!("payment rejected: {e}"),
             );
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::PAYMENT_REQUIRED,
                 [
                     ("content-type", "application/json"),
                     ("access-control-allow-origin", "*"),
