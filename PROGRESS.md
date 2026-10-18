@@ -13,3 +13,4 @@ A9 | 3 tests in usage.rs compared literals to literals and never called the hand
 A8 | no way to measure the binary against the corpus; runner found a 30s hang on unaccepted mints | DONE | ci/conformance_runner.py, conformance/verdicts.json, src/main.rs, src/http/routes/pay.rs
 P1 | sessions/quotes were in-memory: restart lost every paid session and every unpaid quote | DONE (SQLite WAL+FULL, fail-closed) | src/session/{store,store_test}.rs, src/session/mod.rs, src/main.rs, src/cli/mod.rs, Cargo.toml
 P2 | runner reported verify/spend UNVERIFIED even with a mint; no live lane existed | DONE (mint reachable + NUT-07 detected; per-fixture proof check needs V4 CBOR) | ci/mint_probe.py, ci/test_mint_probe.py, ci/conformance_runner.py, conformance/verdicts.json
+REMEASURE | corpus KG twins regenerated from a reachable mint (tollgate#47); verify/spend became measurable | PASS 13->15, UNVERIFIED 14->12 | conformance/verdicts.json, REPORT.md
