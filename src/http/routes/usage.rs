@@ -1,49 +1,42 @@
 //! GET /usage — returns plain text "used/total" or "-1/-1".
 //!
-//! Phase 4: queries SessionManager for the requesting client's session.
-//! The client MAC is sourced from X-Forwarded-For or remote_addr (matching
-//! Go behavior on OpenWrt where nodogsplash sets X-Forwarded-For).
+//! A3: the caller's address comes from X-Forwarded-For / X-Real-Ip / the socket,
+//! and is then resolved to a MAC through the DHCP lease table and ARP — the same
+//! identity the payment handler keyed the session on. Keying on the address
+//! itself (the pre-A3 behaviour) could never match a session.
 
+use crate::http::mac;
 use crate::http::AppState;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
 pub async fn handle_usage(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
-    // Try to get client MAC from X-Forwarded-For or other headers.
-    // In production, nodogsplash provides the client IP, which we'd resolve
-    // to MAC via ARP. For now, we use the IP as a session key proxy.
-    let client_key = headers
-        .get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(',').next().unwrap_or("").trim().to_string())
-        .or_else(|| {
-            headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .map(|s| s.to_string())
-        })
-        .unwrap_or_default();
+    // A3: the session is keyed on the resolved MAC, so this must resolve the
+    // SAME identity the payment handler used. Keying on X-Forwarded-For (the
+    // pre-A3 behaviour) could never match a session created under a MAC.
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let real = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+
+    let mac = mac::client_ip_from_headers(forwarded, real, None)
+        .as_deref()
+        .and_then(mac::resolve_client_mac_default)
+        .map(|r| r.mac);
+
+    let Some(mac) = mac else {
+        return usage_response("-1/-1");
+    };
 
     let sessions = state.sessions.lock().await;
-    if client_key.is_empty() {
-        drop(sessions);
-        return usage_response("-1/-1");
-    }
-
-    match sessions.get_session(&client_key) {
-        Some(session) if sessions.is_active(&client_key) => {
+    match sessions.get_session(&mac) {
+        Some(session) if sessions.is_active(&mac) => {
             let used = session.used;
             let total = session.allotment;
             drop(sessions);
             usage_response(format!("{used}/{total}"))
         }
-        Some(_) => {
-            // Session exists but expired or exhausted
-            drop(sessions);
-            usage_response("-1/-1")
-        }
-        None => {
+        // exists but expired or exhausted, or never existed
+        _ => {
             drop(sessions);
             usage_response("-1/-1")
         }

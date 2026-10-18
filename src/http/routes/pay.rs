@@ -270,9 +270,40 @@ pub async fn handle_pay(
     };
     drop(wallet_guard);
 
-    // NOTE (A3): resolved from dhcp.leases/arp. Until then this is the
-    // documented sentinel, so `/usage` cannot match a session yet.
-    let device_identifier = "00:00:00:00:00:00".to_string();
+    // A3: the client's identity, resolved from the connection's address.
+    //
+    // Pre-A3 this was the literal `00:00:00:00:00:00`, which meant `/usage`
+    // could never match a session and metering silently did nothing. A resolution
+    // failure is now refused explicitly rather than papered over with a sentinel.
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+    let socket_ip = headers
+        .get("x-tollgate-socket-addr")
+        .and_then(|v| v.to_str().ok());
+
+    let device_identifier =
+        match crate::http::mac::client_ip_from_headers(forwarded, real_ip, socket_ip)
+            .as_deref()
+            .and_then(crate::http::mac::resolve_client_mac_default)
+        {
+            Some(resolved) => resolved.mac,
+            None => {
+                tracing::warn!("payment refused: could not resolve the client device identity");
+                let json = notice_json(
+                    &state.identity,
+                    "session-error",
+                    "could not resolve the client device identity from DHCP leases or ARP",
+                );
+                return (
+                    StatusCode::BAD_REQUEST,
+                    [
+                        ("content-type", "application/json"),
+                        ("access-control-allow-origin", "*"),
+                    ],
+                    json,
+                );
+            }
+        };
 
     // Step 3: create session.
     //

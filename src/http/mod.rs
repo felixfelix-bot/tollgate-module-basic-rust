@@ -1,5 +1,6 @@
 //! HTTP server module — axum router with all tollgate routes.
 
+pub mod mac;
 pub mod routes;
 
 use axum::Router;
