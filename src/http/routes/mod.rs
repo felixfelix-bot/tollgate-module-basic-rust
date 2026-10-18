@@ -5,6 +5,18 @@ pub mod discovery;
 #[cfg(test)]
 mod discovery_test;
 pub mod ln_invoice;
+#[cfg(test)]
+mod ln_invoice_quote_test;
 pub mod pay;
+#[cfg(test)]
+mod pay_body_test;
+#[cfg(test)]
+mod pay_notice_test;
+#[cfg(test)]
+mod pay_session_test;
+pub mod quote;
+pub mod select;
+#[cfg(test)]
+mod select_test;
 pub mod usage;
 pub mod whoami;

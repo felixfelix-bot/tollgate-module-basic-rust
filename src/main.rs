@@ -98,22 +98,48 @@ async fn main() {
         }
     }
 
+    // P1: durable session/quote store. Same directory as the wallet database so a
+    // single backup (or a single drained volume) covers both.
+    let state_db_path = {
+        let p = std::env::var("TOLLGATE_STATE_DB")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| db_dir.join("tollgate.db"));
+        tracing::info!(path = %p.display(), "durable session store");
+        p
+    };
+
     // Build app state
     let state = Arc::new(http::AppState {
         config: Arc::new(config_obj),
         identity: Arc::new(identity),
         wallet: Arc::new(tokio::sync::Mutex::new(Some(toll_wallet))),
-        sessions: Arc::new(tokio::sync::Mutex::new(session::SessionManager::new())),
+        sessions: Arc::new(tokio::sync::Mutex::new(
+            session::SessionManager::open(&state_db_path).unwrap_or_else(|e| {
+                // FAIL CLOSED: an unreadable store must never be read as "no
+                // sessions" — starting empty would grant fresh access to every
+                // client. Refusing to start is strictly safer than that.
+                eprintln!("FATAL: cannot open session store: {e}");
+                std::process::exit(78); // EX_CONFIG
+            }),
+        )),
+        quotes: Arc::new(std::sync::Mutex::new(
+            http::routes::quote::MintQuoteRegistry::new(),
+        )),
     });
 
     // Start HTTP server + CLI socket
     let http_state = state.clone();
     let http_handle = tokio::spawn(async move {
         let app = http::create_router((*http_state).clone());
-        let listener = tokio::net::TcpListener::bind("0.0.0.0:2121")
+        // A8: the bind address is overridable so a conformance runner can drive
+        // the real binary on an ephemeral port. The default remains the
+        // protocol's :2121 on every interface, because a captive portal bound to
+        // loopback cannot be reached by any LAN client.
+        let bind = std::env::var("TOLLGATE_BIND").unwrap_or_else(|_| "0.0.0.0:2121".to_string());
+        let listener = tokio::net::TcpListener::bind(&bind)
             .await
-            .expect("failed to bind 0.0.0.0:2121");
-        tracing::info!("HTTP server listening on 0.0.0.0:2121");
+            .unwrap_or_else(|e| panic!("failed to bind {bind}: {e}"));
+        tracing::info!(bind = %bind, "HTTP server listening");
         axum::serve(listener, app).await.expect("HTTP server error");
     });
 

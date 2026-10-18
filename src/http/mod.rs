@@ -1,5 +1,6 @@
 //! HTTP server module — axum router with all tollgate routes.
 
+pub mod mac;
 pub mod routes;
 
 use axum::Router;
@@ -13,6 +14,8 @@ pub struct AppState {
     pub identity: Arc<crate::identity::MerchantIdentity>,
     pub wallet: Arc<tokio::sync::Mutex<Option<crate::wallet::wallet::TollWallet>>>,
     pub sessions: Arc<tokio::sync::Mutex<crate::session::SessionManager>>,
+    /// A5: mint quotes created by `/ln-invoice`.
+    pub quotes: Arc<std::sync::Mutex<crate::http::routes::quote::MintQuoteRegistry>>,
 }
 
 /// Build the main HTTP router with all routes.

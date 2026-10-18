@@ -17,6 +17,9 @@ name = "tollgate-module-basic-rust"
 path = "src/main.rs"
 
 [dependencies]
+# P1: durable sessions/quotes. Already in the lock via cdk-sqlite, so this
+# adds no new code to build — it only makes the existing crate addressable.
+rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "net", "time", "io-util", "fs", "process"] }
 axum = { version = "0.8", features = ["ws"] }
 
