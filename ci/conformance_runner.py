@@ -36,6 +36,8 @@ Exit codes:
 
 from __future__ import annotations
 
+import mint_probe
+
 import argparse
 import json
 import os
@@ -152,6 +154,10 @@ class Result:
             "pass": sum(1 for r in self.rows if r["verdict"] == "PASS"),
             "fail": sum(1 for r in self.rows if r["verdict"] == "FAIL"),
             "unverified": sum(1 for r in self.rows if r["verdict"] == "UNVERIFIED"),
+            # ERROR is counted separately and exits non-zero: an attempted
+            # measurement that failed is not a pass, and folding it into
+            # "unverified" would hide an operator error as a known limitation.
+            "error": sum(1 for r in self.rows if r["verdict"] == "ERROR"),
         }
 
 
@@ -278,13 +284,49 @@ def main() -> int:
                 res.add("decode", name, "UNVERIFIED", exp_go, f"inconclusive: {body[:120]}")
 
         # ---- verify / spend: need a live mint -------------------------------
+        # With --mint we CONTACT the mint and record what it answered. Without
+        # one, the stage stays UNVERIFIED. There is deliberately no third option:
+        # a network failure is recorded as an ERROR row, never as a verdict, and
+        # never as a pass.
+        mint_state = None
+        mint_note = ""
+        if args.mint:
+            try:
+                info = mint_probe.mint_info(args.mint)
+                mint_state = {
+                    "url": args.mint,
+                    "version": info.get("version", "unknown"),
+                    "name": info.get("name", ""),
+                    "nut07": mint_probe.supports(info, 7),
+                    "nut09": mint_probe.supports(info, 9),
+                }
+                mint_note = f"{mint_state['version']} nut07={mint_state['nut07']}"
+            except mint_probe.MintError as e:
+                mint_note = f"MINT UNREADABLE: {e}"
+
         for stage in ("verify", "spend"):
             for name in expected.get(stage, {}):
-                if args.mint:
-                    res.add(stage, name, "UNVERIFIED", None, "mint supplied but live check not implemented in this runner")
-                else:
-                    res.add(stage, name, "UNVERIFIED", _verdict(expected[stage][name], "tollgate-module-basic-go@rc"),
+                if not args.mint:
+                    res.add(stage, name, "UNVERIFIED",
+                            _verdict(expected[stage][name], "tollgate-module-basic-go@rc"),
                             "requires a live mint (NUT-07); offline run cannot certify")
+                    continue
+                if mint_state is None:
+                    # The mint was requested but could not be read. This is an
+                    # ERROR, not UNVERIFIED: the operator asked for a measurement
+                    # and did not get one.
+                    res.add(stage, name, "ERROR", None, mint_note)
+                    continue
+                if not mint_state["nut07"]:
+                    res.add(stage, name, "ERROR", None,
+                            f"mint {mint_state['url']} does not advertise NUT-07")
+                    continue
+                # A reachable mint that supports NUT-07 is a real observation: the
+                # runner can now say the *mint side* of the stage is available.
+                # It cannot yet assert per-fixture verdicts, because V4 proofs are
+                # CBOR and decoding them is not implemented here (see mint_probe).
+                res.add(stage, name, "UNVERIFIED", None,
+                        f"mint reachable ({mint_note}); per-fixture proof check needs V4 CBOR decode")
 
         # ---- HTTP-01 contract ----------------------------------------------
         # No Content-Type: the body is the token (HTTP-01).
@@ -342,12 +384,29 @@ def main() -> int:
     for r in res.rows:
         line = f"  [{r['verdict']:<10}] {r['stage']:<16} {r['fixture']:<24} {r['note']}"
         print(line)
-    print(f"\n  PASS {s['pass']}  FAIL {s['fail']}  UNVERIFIED {s['unverified']}")
     print(
-        "\n  NOTE: verify/spend are UNVERIFIED without a live mint. This run does NOT "
-        "certify them,\n  and no consumer should be added to corpus kg_state.green_consumers "
-        "on the strength of it."
+        f"\n  PASS {s['pass']}  FAIL {s['fail']}  "
+        f"UNVERIFIED {s['unverified']}  ERROR {s.get('error', 0)}"
     )
+    if s.get("error", 0):
+        print(
+            "\n  NOTE: ERROR rows mean a measurement was ATTEMPTED AND FAILED. They are not\n"
+            "  passes and they are not 'unverified' either -- the run asked a question and\n"
+            "  could not answer it. Fix the cause (mint unreachable / unsupported NUT) and\n"
+            "  re-run before drawing any conclusion."
+        )
+    if args.mint:
+        print(
+            "\n  NOTE: a reachable NUT-07 mint makes the stages MEASURABLE, but this runner\n"
+            "  does not yet decode V4 (CBOR) proofs, so per-fixture verify/spend verdicts\n"
+            "  are still not asserted. Implemented, not yet measured."
+        )
+    else:
+        print(
+            "\n  NOTE: verify/spend are UNVERIFIED without a live mint. This run does NOT "
+            "certify them,\n  and no consumer should be added to corpus kg_state.green_consumers "
+            "on the strength of it."
+        )
 
     if args.out:
         payload = {
@@ -363,7 +422,7 @@ def main() -> int:
         outp.write_text(json.dumps(payload, indent=2) + "\n")
         print(f"\n  verdict set written to {args.out}")
 
-    return 1 if res.failed() else 0
+    return 1 if (res.failed() or s.get("error", 0)) else 0
 
 
 if __name__ == "__main__":
