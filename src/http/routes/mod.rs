@@ -23,3 +23,6 @@ pub mod whoami;
 
 #[cfg(test)]
 mod ln_invoice_contract_test;
+
+#[cfg(test)]
+mod balance_contract_test;

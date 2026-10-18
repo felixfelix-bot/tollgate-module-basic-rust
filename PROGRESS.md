@@ -18,3 +18,5 @@ ADR-0002 | usage counter paid a fsync per metering tick (money rule applied to a
 P3 | /ln-invoice invented quote ids and returned an empty request, so no client could pay | DONE (real BOLT11 from the mint) | src/http/routes/{ln_invoice,ln_invoice_live_test}.rs, src/wallet/wallet.rs
 P4 | two-mint behaviour was untested; the code already keyed wallets by mint | DONE (regression tests, no code change) | src/wallet/{per_mint_test,mod}.rs
 P5 | /ln-invoice shape did not match corpus; PAID quote never minted or granted | PARTIAL: shape fixed, grant hardware-gated | src/http/routes/{ln_invoice,ln_invoice_contract_test}.rs, src/wallet/wallet.rs
+P5a | aarch64 musl cross-build was recorded as blocked; it is not - musl.cc toolchain works | DONE (verified on hardware) | ci/cross-build-aarch64.sh
+P5b | /balance returned a wallet dump, not the corpus client-session shape; found on hardware | DONE (verified on device) | src/http/routes/{balance,balance_contract_test}.rs
