@@ -11,3 +11,4 @@ A5 | /ln-invoice was a stub: fake quote ids, hardcoded unpaid, expiry 0 | DONE (
 A6 | accepted_mints.first() both priced payments and gated acceptance: 2nd-mint tokens mispriced | DONE (selection; wallet still single-instance) | src/http/routes/{select,select_test,pay}.rs, src/wallet/verify.rs, src/http/routes/mod.rs
 A9 | 3 tests in usage.rs compared literals to literals and never called the handler | DONE | src/http/routes/usage.rs
 A8 | no way to measure the binary against the corpus; runner found a 30s hang on unaccepted mints | DONE | ci/conformance_runner.py, conformance/verdicts.json, src/main.rs, src/http/routes/pay.rs
+P1 | sessions/quotes were in-memory: restart lost every paid session and every unpaid quote | DONE (SQLite WAL+FULL, fail-closed) | src/session/{store,store_test}.rs, src/session/mod.rs, src/main.rs, src/cli/mod.rs, Cargo.toml

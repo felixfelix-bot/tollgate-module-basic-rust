@@ -284,7 +284,20 @@ mod tests {
             vec![],
             std::path::PathBuf::from("/tmp"),
         ))));
-        let sessions = Arc::new(tokio::sync::Mutex::new(SessionManager::new()));
+        // P1: durable. Same fail-closed rule as main.rs — an unreadable store
+        // must not be read as "no sessions".
+        let state_db = std::env::var("TOLLGATE_STATE_DB")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("/etc/tollgate/tollgate.db"));
+        let sessions = Arc::new(tokio::sync::Mutex::new(
+            SessionManager::open(&state_db).unwrap_or_else(|e| {
+                eprintln!(
+                    "FATAL: cannot open session store at {}: {e}",
+                    state_db.display()
+                );
+                std::process::exit(78);
+            }),
+        ));
         Arc::new(AppState {
             config,
             identity,

@@ -98,12 +98,30 @@ async fn main() {
         }
     }
 
+    // P1: durable session/quote store. Same directory as the wallet database so a
+    // single backup (or a single drained volume) covers both.
+    let state_db_path = {
+        let p = std::env::var("TOLLGATE_STATE_DB")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| db_dir.join("tollgate.db"));
+        tracing::info!(path = %p.display(), "durable session store");
+        p
+    };
+
     // Build app state
     let state = Arc::new(http::AppState {
         config: Arc::new(config_obj),
         identity: Arc::new(identity),
         wallet: Arc::new(tokio::sync::Mutex::new(Some(toll_wallet))),
-        sessions: Arc::new(tokio::sync::Mutex::new(session::SessionManager::new())),
+        sessions: Arc::new(tokio::sync::Mutex::new(
+            session::SessionManager::open(&state_db_path).unwrap_or_else(|e| {
+                // FAIL CLOSED: an unreadable store must never be read as "no
+                // sessions" — starting empty would grant fresh access to every
+                // client. Refusing to start is strictly safer than that.
+                eprintln!("FATAL: cannot open session store: {e}");
+                std::process::exit(78); // EX_CONFIG
+            }),
+        )),
         quotes: Arc::new(std::sync::Mutex::new(
             http::routes::quote::MintQuoteRegistry::new(),
         )),
