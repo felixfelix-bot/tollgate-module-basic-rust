@@ -213,11 +213,10 @@ pub async fn handle_pay(
     // allowlist afterwards meant a token from an unaccepted mint cost a full
     // mint timeout (30 s) before being refused — and a token whose mint was
     // simply unreachable hung the request. Cheap checks first.
-    let mint = match verifier_token_mint(&token)
-        .and_then(|m| {
-            crate::http::routes::select::select_mint_for_token(&state.config, &m)
-                .map_err(|e| format!("{e:?}"))
-        }) {
+    let mint = match verifier_token_mint(&token).and_then(|m| {
+        crate::http::routes::select::select_mint_for_token(&state.config, &m)
+            .map_err(|e| format!("{e:?}"))
+    }) {
         Ok(m) => m,
         Err(e) => {
             tracing::warn!(error = %e, "payment rejected before mint contact");
