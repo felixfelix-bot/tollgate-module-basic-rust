@@ -27,12 +27,32 @@ pub async fn handle_usage(State(state): State<AppState>, headers: HeaderMap) -> 
         return usage_response("-1/-1");
     };
 
+    // A7: ask the enforcement daemon for live usage. Before this the module was
+    // dead code, so `used` never left zero and `/usage` always claimed the
+    // customer had consumed nothing.
+    //
+    // Fallback is the stored counter, and it is reported as an ordinary reading:
+    // on a non-OpenWrt host there is no ndsctl, and refusing to answer would be
+    // worse than answering with the last known value.
+    let live = crate::metering::poll_usage_reading(&mac).await;
+
     let sessions = state.sessions.lock().await;
     match sessions.get_session(&mac) {
         Some(session) if sessions.is_active(&mac) => {
-            let used = session.used;
             let total = session.allotment;
+            let stored = session.used;
             drop(sessions);
+
+            let used = match live {
+                Ok(reading) => {
+                    tracing::debug!(mac = %mac, used = reading.used, "usage: live reading");
+                    reading.used
+                }
+                Err(e) => {
+                    tracing::debug!(mac = %mac, error = %e, "usage: ndsctl unavailable, using stored counter");
+                    stored
+                }
+            };
             usage_response(format!("{used}/{total}"))
         }
         // exists but expired or exhausted, or never existed
