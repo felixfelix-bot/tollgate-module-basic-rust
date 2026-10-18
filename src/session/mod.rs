@@ -39,7 +39,23 @@ pub struct CustomerSession {
 pub struct SessionManager {
     pub sessions: HashMap<String, CustomerSession>,
     store: Option<SessionStore>,
+    /// ADR-0002: per-MAC batching state for the usage counter.
+    pending: HashMap<String, UsageFlush>,
 }
+
+/// ADR-0002 batching state for one session's `used` counter.
+#[derive(Debug, Clone, Copy)]
+struct UsageFlush {
+    /// Value currently on disk.
+    persisted: u64,
+    /// When the last successful flush happened (unix seconds).
+    last_flush: u64,
+}
+
+/// Flush the usage counter at most this often.
+const USAGE_FLUSH_SECS: u64 = 5;
+/// ...or once this fraction of the allotment has moved (parts per hundred).
+const USAGE_FLUSH_PERCENT: u64 = 5;
 
 impl SessionManager {
     /// Create a new empty in-memory SessionManager.
@@ -47,6 +63,7 @@ impl SessionManager {
         SessionManager {
             sessions: HashMap::new(),
             store: None,
+            pending: HashMap::new(),
         }
     }
 
@@ -69,6 +86,9 @@ impl SessionManager {
         let closed = store.close_expired(now)?;
         for s in &closed {
             let down_for = now.saturating_sub(s.expiry);
+            // ADR-0002: an expired-while-down session is a terminal transition, so its
+            // final usage is recorded for audit before the row disappears.
+            let _ = store.record_closed_usage(&s.mac, s.used);
             tracing::info!(
                 mac = %s.mac,
                 expired_for_secs = down_for,
@@ -90,6 +110,7 @@ impl SessionManager {
         Ok(SessionManager {
             sessions,
             store: Some(store),
+            pending: HashMap::new(),
         })
     }
 
@@ -125,6 +146,13 @@ impl SessionManager {
             granted_at: now,
         };
         self.sessions.insert(mac.to_string(), session.clone());
+        self.pending.insert(
+            mac.to_string(),
+            UsageFlush {
+                persisted: 0,
+                last_flush: now_secs(),
+            },
+        );
         if let Some(st) = &self.store {
             if let Err(e) = st.upsert_session(&session) {
                 // A session we could not persist is a session we do not have:
@@ -164,7 +192,15 @@ impl SessionManager {
     /// Deletion is persisted: a revoked session that reappeared after restart
     /// would be a re-grant nobody paid for.
     pub fn revoke_session(&mut self, mac: &str) {
+        // Terminal: persist the exact final value BEFORE deleting the row.
+        self.flush_usage(mac);
+        if let Some(st) = &self.store {
+            if let Some(s) = self.sessions.get(mac) {
+                let _ = st.record_closed_usage(mac, s.used);
+            }
+        }
         self.sessions.remove(mac);
+        self.pending.remove(mac);
         if let Some(st) = &self.store {
             if let Err(e) = st.delete_session(mac) {
                 tracing::error!(mac = %mac, error = %e, "failed to delete revoked session");
@@ -186,7 +222,14 @@ impl SessionManager {
             .collect();
         let count = expired_macs.len();
         for mac in &expired_macs {
+            self.flush_usage(mac);
+            if let Some(st) = &self.store {
+                if let Some(s) = self.sessions.get(mac) {
+                    let _ = st.record_closed_usage(mac, s.used);
+                }
+            }
             self.sessions.remove(mac);
+            self.pending.remove(mac);
             if let Some(st) = &self.store {
                 if let Err(e) = st.delete_session(mac) {
                     tracing::error!(mac = %mac, error = %e, "failed to delete expired session");
@@ -197,14 +240,86 @@ impl SessionManager {
     }
 
     /// Update the `used` field for a session. No-op if session doesn't exist.
+    ///
+    /// ADR-0002: the in-memory value is always current, but the disk write is
+    /// BATCHED. `used` is a cache of a value `ndsctl` already knows, so paying a
+    /// fsync per metering tick applies the money rule to the wrong thing -- while
+    /// never persisting it is worse, because `ndsctl` counters reset on daemon
+    /// restart and a client would be handed a fresh allotment it already consumed.
+    ///
+    /// Flush when either trigger fires:
+    ///   * `USAGE_FLUSH_SECS` elapsed since the last flush, or
+    ///   * the counter moved by `USAGE_FLUSH_PERCENT` of the allotment, or
+    ///   * a terminal transition (see `flush_usage`, called by revoke/expire).
     pub fn update_usage(&mut self, mac: &str, used: u64) {
-        if let Some(s) = self.sessions.get_mut(mac) {
-            s.used = used;
+        let allotment = match self.sessions.get_mut(mac) {
+            Some(s) => {
+                s.used = used;
+                s.allotment
+            }
+            None => return,
+        };
+        if self.store.is_none() {
+            return;
+        }
+
+        let now = now_secs();
+        let state = self.pending.entry(mac.to_string()).or_insert(UsageFlush {
+            // A session we did not create (reloaded from disk) starts from whatever
+            // was persisted, so the first small delta is not treated as a jump.
+            persisted: used,
+            last_flush: now,
+        });
+
+        let elapsed = now.saturating_sub(state.last_flush) >= USAGE_FLUSH_SECS;
+        let delta = used.saturating_sub(state.persisted);
+        let pct_trigger =
+            allotment > 0 && delta.saturating_mul(100) >= allotment * USAGE_FLUSH_PERCENT;
+
+        if elapsed || pct_trigger {
+            state.persisted = used;
+            state.last_flush = now;
             if let Some(st) = &self.store {
                 if let Err(e) = st.set_usage(mac, used) {
                     tracing::error!(mac = %mac, used, error = %e, "failed to persist usage");
                 }
             }
+        }
+    }
+
+    /// Write the pending usage for `mac` immediately, if any.
+    ///
+    /// Called by every terminal transition (revoke / expire / close) so the persisted
+    /// number is EXACT at the moment the session stops mattering to write more. That
+    /// is the number a dispute would be settled against.
+    fn flush_usage(&mut self, mac: &str) {
+        let Some(st) = &self.store else { return };
+        let Some(s) = self.sessions.get(mac) else {
+            return;
+        };
+        let used = s.used;
+        let should = self
+            .pending
+            .get(mac)
+            .map(|p| p.persisted != used)
+            .unwrap_or(true);
+        if should {
+            if let Err(e) = st.set_usage(mac, used) {
+                tracing::error!(mac = %mac, used, error = %e, "failed to flush usage");
+            }
+        }
+        if let Some(p) = self.pending.get_mut(mac) {
+            p.persisted = used;
+            p.last_flush = now_secs();
+        }
+    }
+
+    /// Test-only: pretend the last flush happened `secs` seconds ago, so the time
+    /// trigger can be exercised without sleeping in a unit test.
+    #[doc(hidden)]
+    pub fn force_flush_after_for_test(&mut self, secs: u64) {
+        for p in self.pending.values_mut() {
+            p.last_flush = p.last_flush.saturating_sub(secs);
         }
     }
 }
@@ -224,6 +339,9 @@ impl Default for SessionManager {
 
 #[cfg(test)]
 mod store_test;
+
+#[cfg(test)]
+mod usage_batching_test;
 
 #[cfg(test)]
 mod tests;
