@@ -39,6 +39,9 @@ async fn discovery_json(config: Config) -> Value {
         sessions: std::sync::Arc::new(tokio::sync::Mutex::new(
             crate::session::SessionManager::new(),
         )),
+        quotes: std::sync::Arc::new(std::sync::Mutex::new(
+            crate::http::routes::quote::MintQuoteRegistry::new(),
+        )),
     };
     let app = crate::http::create_router(state);
     let resp = app

@@ -290,6 +290,9 @@ mod tests {
             identity,
             wallet,
             sessions,
+            quotes: Arc::new(std::sync::Mutex::new(
+                crate::http::routes::quote::MintQuoteRegistry::new(),
+            )),
         })
     }
 
