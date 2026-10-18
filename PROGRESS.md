@@ -1,0 +1,5 @@
+# Path A progress — tollgate-module-basic-rust
+
+One line per item: `A<n> | finding | status | files touched`
+
+A1 | 1022 was unsigned hand-built JSON, allotment was `received*1000` (unrelated to the price table) | DONE | src/http/routes/pay.rs, src/http/routes/pay_session_test.rs, src/nostr_event.rs

@@ -20,6 +20,24 @@ pub struct NostrEvent {
     pub sig: String,
 }
 
+/// Compute the NIP-01 event id for an already-built event.
+///
+/// The id is `SHA256(JSON([0, pubkey, created_at, kind, tags, content]))`.
+/// Exposed so callers (and tests) can verify an event's id independently of how
+/// it was produced.
+pub fn compute_id(event: &NostrEvent) -> String {
+    let id_array = serde_json::json!([
+        0,
+        event.pubkey,
+        event.created_at,
+        event.kind,
+        event.tags,
+        event.content
+    ]);
+    let id_str = serde_json::to_string(&id_array).unwrap_or_default();
+    hex::encode(Sha256::digest(id_str.as_bytes()))
+}
+
 /// Create and sign a Nostr event.
 pub fn create_event(
     kind: u32,
@@ -38,23 +56,23 @@ pub fn create_event(
         .as_secs();
 
     // Compute event ID = SHA256 of serialized array: [0, pubkey, created_at, kind, tags, content]
-    let id_array = serde_json::json!([0, pubkey_hex, created_at, kind, tags, content]);
-    let id_str = serde_json::to_string(&id_array).unwrap_or_default();
-    let id_hash = Sha256::digest(id_str.as_bytes());
-    let id = hex::encode(id_hash);
+    let mut event = NostrEvent {
+        id: String::new(),
+        pubkey: pubkey_hex,
+        created_at,
+        kind,
+        tags,
+        content: content.to_string(),
+        sig: String::new(),
+    };
+    event.id = compute_id(&event);
+    let id_hash = Sha256::digest(hex::decode(&event.id).unwrap_or_default());
 
     // Sign the ID hash
     let msg = Message::from_digest(id_hash.into());
     let sig = secp.sign_schnorr_no_aux_rand(&msg, &keypair);
     let sig_hex = sig.to_string();
 
-    NostrEvent {
-        id,
-        pubkey: pubkey_hex,
-        created_at,
-        kind,
-        tags,
-        content: content.to_string(),
-        sig: sig_hex,
-    }
+    event.sig = sig_hex;
+    event
 }

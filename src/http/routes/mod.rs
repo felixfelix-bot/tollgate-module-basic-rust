@@ -6,5 +6,7 @@ pub mod discovery;
 mod discovery_test;
 pub mod ln_invoice;
 pub mod pay;
+#[cfg(test)]
+mod pay_session_test;
 pub mod usage;
 pub mod whoami;

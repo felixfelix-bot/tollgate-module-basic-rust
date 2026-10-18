@@ -28,6 +28,78 @@ fn extract_token_from_nostr_event(body: &str) -> Option<String> {
     None
 }
 
+/// A kind-21023 notice carrying the TIP-01 `level` + `code` tags.
+///
+/// A2 replaces the remaining hand-built notices with this; A1 needs it because
+/// the new failure paths must not emit bare JSON.
+pub(crate) fn notice_json(code: &str, content: &str) -> String {
+    serde_json::json!({
+        "kind": 21023,
+        "tags": [["level", "error"], ["code", code]],
+        "content": content,
+    })
+    .to_string()
+}
+
+/// Allotment for a payment, per TIP-01/TIP-02.
+///
+/// `steps = amount_sats / price_per_step` (integer division — a partial step is
+/// not granted), `allotment = steps * step_size`.
+///
+/// Before A1 the handler used `received_amount * 1000`, which is a satoshi ->
+/// millisatoshi conversion dressed up as an allotment: it never consulted the
+/// price table, so a 1-sat payment and a 100-sat payment produced allotments
+/// unrelated to what the operator charges. This is the single place the price
+/// table is turned into access.
+pub(crate) fn calculate_allotment(
+    amount_sats: u64,
+    price_per_step: u64,
+    step_size: u64,
+    metric: &str,
+) -> Result<u64, String> {
+    if price_per_step == 0 {
+        return Err("price_per_step is 0: cannot derive steps (would divide by zero)".to_string());
+    }
+    if metric != "bytes" && metric != "milliseconds" {
+        return Err(format!(
+            "metric {metric:?} is not one of `bytes` / `milliseconds` (TIP-01)"
+        ));
+    }
+    let steps = amount_sats / price_per_step;
+    Ok(steps * step_size)
+}
+
+/// Build the signed kind-1022 session event (TIP-01).
+///
+/// `device_identifier` is the customer's MAC. `customer_pubkey` is `Some` only
+/// when the payment carried a customer Nostr identity — TIP-01 makes `p`
+/// optional and pubkey-only, and emitting a MAC there is the recorded
+/// `DIV-2026-10-mac-in-p-tag` bug class.
+pub(crate) fn build_session_event(
+    config: &crate::config::schema::Config,
+    identity: &crate::identity::MerchantIdentity,
+    device_identifier: &str,
+    allotment: u64,
+    start_time: u64,
+    customer_pubkey: Option<&str>,
+) -> serde_json::Value {
+    let mut tags: Vec<Vec<String>> = Vec::new();
+    if let Some(pk) = customer_pubkey {
+        tags.push(vec!["p".to_string(), pk.to_string()]);
+    }
+    tags.push(vec![
+        "device-identifier".to_string(),
+        "mac".to_string(),
+        device_identifier.to_string(),
+    ]);
+    tags.push(vec!["allotment".to_string(), allotment.to_string()]);
+    tags.push(vec!["metric".to_string(), config.metric.clone()]);
+    tags.push(vec!["start-time".to_string(), start_time.to_string()]);
+
+    let event = crate::nostr_event::create_event(1022, tags, "", &identity.secret_key);
+    serde_json::to_value(&event).unwrap_or_else(|_| serde_json::json!({}))
+}
+
 pub async fn handle_pay(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -147,16 +219,85 @@ pub async fn handle_pay(
     };
     drop(wallet_guard);
 
-    // Step 3: create session — allotment in millisatoshis
-    let duration_secs = 3600u64; // default 1 hour session
-    let allotment = received_amount * 1000; // convert sat to millisat for allotment
+    // NOTE (A3): resolved from dhcp.leases/arp. Until then this is the
+    // documented sentinel, so `/usage` cannot match a session yet.
+    let device_identifier = "00:00:00:00:00:00".to_string();
+
+    // Step 3: create session.
+    //
+    // A1: allotment comes from the PRICE TABLE (steps x step_size), not from a
+    // satoshi -> millisatoshi conversion. A payment that does not cover one
+    // whole step grants nothing and is refused rather than silently granted an
+    // allotment unrelated to the price.
+    let mint = state
+        .config
+        .accepted_mints
+        .first()
+        .cloned()
+        .ok_or_else(|| "no accepted mints configured".to_string());
+    let mint = match mint {
+        Ok(m) => m,
+        Err(e) => {
+            let json = notice_json("session-error", &format!("payment rejected: {e}"));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [
+                    ("content-type", "application/json"),
+                    ("access-control-allow-origin", "*"),
+                ],
+                json,
+            );
+        }
+    };
+
+    let allotment = match calculate_allotment(
+        received_amount,
+        mint.price_per_step,
+        state.config.step_size,
+        &state.config.metric,
+    ) {
+        Ok(a) if a > 0 => a,
+        Ok(_) => {
+            let json = notice_json(
+                "payment-error-token-spent",
+                &format!(
+                    "payment of {received_amount} sat does not cover one step at {} sat/step",
+                    mint.price_per_step
+                ),
+            );
+            return (
+                StatusCode::PAYMENT_REQUIRED,
+                [
+                    ("content-type", "application/json"),
+                    ("access-control-allow-origin", "*"),
+                ],
+                json,
+            );
+        }
+        Err(e) => {
+            let json = notice_json("session-error", &format!("payment rejected: {e}"));
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                [
+                    ("content-type", "application/json"),
+                    ("access-control-allow-origin", "*"),
+                ],
+                json,
+            );
+        }
+    };
+
+    let start_time = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
 
     let mut sessions = state.sessions.lock().await;
     let _session = sessions.create_session(
-        "00:00:00:00:00:00",
+        &device_identifier,
         allotment,
         &state.config.metric,
-        duration_secs,
+        start_time,
     );
     drop(sessions);
 
@@ -167,24 +308,15 @@ pub async fn handle_pay(
         "session granted"
     );
 
-    // Step 4: return kind 1022 session-granted event
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-
-    let resp = serde_json::json!({
-        "id": format!("{:064x}", rand::random::<u64>()),
-        "pubkey": state.identity.pubkey_hex(),
-        "created_at": now,
-        "kind": 1022,
-        "tags": [
-            ["allotment", allotment.to_string()],
-            ["metric", state.config.metric.clone()],
-        ],
-        "content": "",
-        "sig": ""
-    });
+    // Step 4: return a SIGNED kind 1022 session event (TIP-01).
+    let resp = build_session_event(
+        &state.config,
+        &state.identity,
+        &device_identifier,
+        allotment,
+        start_time,
+        None, // a raw-token payment carries no customer pubkey; p stays omitted
+    );
 
     let json = serde_json::to_string(&resp).unwrap_or_default();
     (
