@@ -20,6 +20,10 @@ from __future__ import annotations
 
 import base64
 import json
+import os
+import re
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 
@@ -89,14 +93,58 @@ def supports(info: dict, nut: int) -> bool:
     return str(nut) in {str(k) for k in info.get("nuts", {})}
 
 
+CDK_CLI_ENV = "CDK_CLI"
+
+
+def _cdk_cli() -> str:
+    """Path to `cdk-cli`, or raise MintError naming the missing tool.
+
+    ADR-0003: V4 decoding is delegated to cdk-cli, the corpus's certified
+    reference consumer. A conformance runner should agree with the implementation
+    the corpus trusts, not with a decoder written by the party being measured.
+    """
+    candidates = []
+    env = os.environ.get(CDK_CLI_ENV)
+    if env:
+        candidates.append(env)
+    candidates += [
+        os.path.expanduser("~/mint/cdk-cli"),
+        "cdk-cli",
+    ]
+    for c in candidates:
+        found = c if os.path.sep in c else shutil.which(c)
+        if found and os.path.exists(found) and os.access(found, os.X_OK):
+            return found
+    raise MintError(
+        f"cdk-cli not found (looked at ${CDK_CLI_ENV}, ~/mint/cdk-cli, PATH). "
+        "V4/CBOR token decoding is delegated to it per ADR-0003; without it the "
+        "proofs cannot be read and the stage is UNVERIFIED, not passed."
+    )
+
+
+def cdk_cli_version() -> str:
+    """`cdk-cli --version`, for the verdict set's provenance."""
+    cli = _cdk_cli()
+    proc = subprocess.run(
+        [cli, "--version"], capture_output=True, text=True, timeout=30
+    )
+    return (proc.stdout or proc.stderr).strip().splitlines()[0] if proc.returncode == 0 else "unknown"
+
+
+def _hex_or_str(v):
+    """cdk-cli prints byte fields as `h'..'`; normalise to a hex string."""
+    if not isinstance(v, str):
+        return v
+    if v.startswith("h'") and v.endswith("'"):
+        return v[2:-1]
+    return v
+
+
 def decode_token(token: str):
     """Return (mint_url, proofs) for a Cashu token.
 
-    Supports both wire generations:
-      * `cashuA` -- base64 JSON (V1/V3 legacy)
-      * `cashuB` -- base64 CBOR (V4)
-    V4 is decoded by hand because there is no CBOR dependency here and adding one
-    to a conformance runner is not worth it; the map shape is stable.
+    `cashuA` is base64 JSON and decoded inline. `cashuB` is CBOR and delegated to
+    `cdk-cli` (ADR-0003) — never guessed, never silently empty.
     """
     token = token.strip()
     if token.startswith("cashuA"):
@@ -106,12 +154,50 @@ def decode_token(token: str):
         mint = d.get("m") or (d.get("t") or {}).get("m")
         proofs = d.get("proofs") or (d.get("t") or {}).get("p") or []
         return mint, proofs
+
     if token.startswith("cashuB"):
-        raise MintError(
-            "V4 (cashuB) token: CBOR decoding is not implemented in this runner; "
-            "pass the mint explicitly with --mint and the proofs cannot be "
-            "extracted. Recorded as UNVERIFIED rather than guessed."
+        cli = _cdk_cli()
+        proc = subprocess.run(
+            [cli, "decode-token", token], capture_output=True, text=True, timeout=60
         )
+        if proc.returncode != 0:
+            raise MintError(
+                "cdk-cli could not decode the V4 token: "
+                f"{(proc.stderr or proc.stdout).strip()[:300]}"
+            )
+        # cdk-cli pretty-prints with Rust Debug formatting, which is NOT JSON:
+        # byte fields appear as h'01e7..' and objects carry TRAILING COMMAS. Both
+        # must be normalised before parsing. Recorded here because assuming
+        # cdk-cli emits strict JSON is the bug that produced this comment.
+        raw = re.sub(r"h'([0-9a-fA-F]*)'", r'"\1"', proc.stdout)
+        raw = re.sub(r",(\s*[}\]])", r"\1", raw)
+        try:
+            d = json.loads(raw)
+        except ValueError as e:
+            raise MintError(
+                f"cdk-cli output was not JSON even after normalising h'..' "
+                f"literals and trailing commas: {e}"
+            ) from None
+
+        mint = d.get("m")
+        if not mint:
+            raise MintError("cdk-cli decode returned no mint URL")
+        proofs = []
+        for g in d.get("t") or []:
+            for pr in g.get("p") or []:
+                proofs.append(
+                    {
+                        "amount": pr.get("a"),
+                        "secret": _hex_or_str(pr.get("s")),
+                        "C": _hex_or_str(pr.get("c")),
+                    }
+                )
+        if not proofs:
+            # A decoded token with no proofs is malformed, not an empty stage.
+            # Returning silence here would read as "nothing to check".
+            raise MintError("cdk-cli decoded the V4 token but found no proofs")
+        return mint, proofs
+
     raise MintError(f"unrecognised token format: {token[:12]!r}")
 
 
@@ -159,3 +245,20 @@ def classify(checkstate: dict[str, str]) -> str:
 
 def verdict_is_known(v: str) -> bool:
     return v in KNOWN_VERDICTS
+
+
+def proof_ys(proofs) -> list[str]:
+    """Y values for a NUT-07 checkstate.
+
+    NUT-07 takes `Ys` = compressed secp256k1 *points*, not secrets. Posting
+    secrets returns HTTP 422 and would make every row look like a mint error.
+    """
+    import nut00
+
+    secrets = []
+    for p in proofs:
+        sec = p["secret"] if isinstance(p, dict) else p
+        if not sec:
+            raise MintError("proof without a secret cannot be checked")
+        secrets.append(sec)
+    return nut00.proof_ys(secrets)

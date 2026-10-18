@@ -9,6 +9,7 @@ error-paths, because the failure mode worth testing is not "does HTTP work" but
 would be untestable in CI and would not protect the property that matters.
 """
 
+import os
 import sys
 import unittest
 
@@ -68,12 +69,26 @@ class TestErrorNeverBecomesVerdict(unittest.TestCase):
 
 
 class TestTokenDecode(unittest.TestCase):
-    def test_v4_is_refused_explicitly_not_silently(self):
-        # The honest answer for a CBOR token in this runner is an error that says
-        # so -- silently returning no proofs would look like "nothing to check".
-        with self.assertRaises(m.MintError) as ctx:
+    def test_v4_without_cdk_cli_is_an_error_not_silence(self):
+        # ADR-0003: V4 decoding is delegated to cdk-cli. If it is absent the answer
+        # must be an error naming the missing tool -- never an empty proof list,
+        # which would read as "nothing to check".
+        orig = os.environ.get("CDK_CLI")
+        os.environ["CDK_CLI"] = "/nonexistent/cdk-cli-for-test"
+        try:
+            with self.assertRaises(m.MintError) as ctx:
+                m.decode_token("cashuB" + "A" * 40)
+            self.assertIn("cdk-cli", str(ctx.exception).lower())
+        finally:
+            if orig is None:
+                os.environ.pop("CDK_CLI", None)
+            else:
+                os.environ["CDK_CLI"] = orig
+
+    def test_v4_garbage_is_an_error(self):
+        # cdk-cli exists but rejects it -> error, not an empty result.
+        with self.assertRaises(m.MintError):
             m.decode_token("cashuB" + "A" * 40)
-        self.assertIn("CBOR", str(ctx.exception))
 
     def test_garbage_is_refused(self):
         with self.assertRaises(m.MintError):
