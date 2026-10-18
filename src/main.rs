@@ -104,6 +104,9 @@ async fn main() {
         identity: Arc::new(identity),
         wallet: Arc::new(tokio::sync::Mutex::new(Some(toll_wallet))),
         sessions: Arc::new(tokio::sync::Mutex::new(session::SessionManager::new())),
+        quotes: Arc::new(std::sync::Mutex::new(
+            http::routes::quote::MintQuoteRegistry::new(),
+        )),
     });
 
     // Start HTTP server + CLI socket

@@ -29,6 +29,9 @@ fn app() -> axum::Router {
         sessions: std::sync::Arc::new(tokio::sync::Mutex::new(
             crate::session::SessionManager::new(),
         )),
+        quotes: std::sync::Arc::new(std::sync::Mutex::new(
+            crate::http::routes::quote::MintQuoteRegistry::new(),
+        )),
     };
     crate::http::create_router(state)
 }
