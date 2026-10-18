@@ -132,9 +132,38 @@ pub async fn handle_pay(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    // Extract token from either path
-    let token = if content_type.contains("text/plain") {
-        tracing::info!(len = body.len(), "received text/plain payment");
+    // A4: the documented ceiling for a payment body. The axum `String`
+    // extractor is unbounded, so without this check the gateway buffers whatever
+    // it is sent. Corpus vector http01-post/body-over-1mib. Exactly 1 MiB passes.
+    const MAX_BODY_BYTES: usize = 1024 * 1024;
+    if body.len() > MAX_BODY_BYTES {
+        tracing::warn!(len = body.len(), "payment body over 1 MiB refused");
+        let json = notice_json(
+            &state.identity,
+            "payment-processing-failed",
+            &format!(
+                "body too large: {} bytes exceeds the {MAX_BODY_BYTES}-byte limit",
+                body.len()
+            ),
+        );
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            [
+                ("content-type", "application/json"),
+                ("access-control-allow-origin", "*"),
+            ],
+            json,
+        );
+    }
+
+    // Extract token from either path.
+    //
+    // A4: an ABSENT Content-Type is a raw token body (HTTP-01: "a bearer asset
+    // token directly in the request body"). Refusing it with 415 broke plain
+    // `curl -d "<token>"`, which sends no type. An explicit, unsupported type is
+    // still refused.
+    let token = if content_type.is_empty() || content_type.contains("text/plain") {
+        tracing::info!(len = body.len(), ct = %content_type, "received raw token body");
         body.trim().to_string()
     } else if content_type.contains("application/json") {
         tracing::info!(len = body.len(), "received json payment");
