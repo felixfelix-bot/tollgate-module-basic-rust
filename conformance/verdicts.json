@@ -1,7 +1,7 @@
 {
   "consumer": "tollgate-module-basic-rust",
   "corpus_version": "v1",
-  "measured_at": "2026-10-18T14:03:11Z",
+  "measured_at": "2026-10-18T14:04:46Z",
   "mint": null,
   "summary": {
     "pass": 13,
