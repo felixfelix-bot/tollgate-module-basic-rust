@@ -151,8 +151,23 @@ def decode_token(token: str):
         body = token[len("cashuA") :]
         body += "=" * (-len(body) % 4)
         d = json.loads(base64.urlsafe_b64decode(body))
-        mint = d.get("m") or (d.get("t") or {}).get("m")
-        proofs = d.get("proofs") or (d.get("t") or {}).get("p") or []
+        # Two V3 shapes exist in the wild:
+        #   flat     {"m": url, "proofs": [...]}                 (older / hand-built)
+        #   grouped  {"token": [{"mint": url, "proofs": [...]}], "unit": ...}  (cdk-cli)
+        # Reading only the flat shape silently returns zero proofs for cdk-cli
+        # output, which then looks like "nothing to check" rather than a parse bug.
+        mint = d.get("m")
+        proofs = d.get("proofs")
+        if mint is None and isinstance(d.get("token"), list) and d["token"]:
+            g = d["token"][0]
+            mint = g.get("mint") or g.get("m")
+            proofs = g.get("proofs") or g.get("p")
+        if proofs is None:
+            t = d.get("t")
+            if isinstance(t, dict):
+                mint = mint or t.get("m")
+                proofs = t.get("p")
+        proofs = proofs or []
         return mint, proofs
 
     if token.startswith("cashuB"):
@@ -169,7 +184,15 @@ def decode_token(token: str):
         # byte fields appear as h'01e7..' and objects carry TRAILING COMMAS. Both
         # must be normalised before parsing. Recorded here because assuming
         # cdk-cli emits strict JSON is the bug that produced this comment.
-        raw = re.sub(r"h'([0-9a-fA-F]*)'", r'"\1"', proc.stdout)
+        # cdk-cli also prints status chatter before the payload, e.g.
+        # "Recovered 3 operations, 0 compensated, ...". Slice from the first brace
+        # so we parse the object and not the narration around it.
+        out = proc.stdout
+        brace = out.find("{")
+        if brace < 0:
+            raise MintError(f"cdk-cli printed no JSON object: {out.strip()[:200]}")
+        out = out[brace:]
+        raw = re.sub(r"h'([0-9a-fA-F]*)'", r'"\1"', out)
         raw = re.sub(r",(\s*[}\]])", r"\1", raw)
         try:
             d = json.loads(raw)
