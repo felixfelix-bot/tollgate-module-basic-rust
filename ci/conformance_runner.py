@@ -321,12 +321,52 @@ def main() -> int:
                     res.add(stage, name, "ERROR", None,
                             f"mint {mint_state['url']} does not advertise NUT-07")
                     continue
-                # A reachable mint that supports NUT-07 is a real observation: the
-                # runner can now say the *mint side* of the stage is available.
-                # It cannot yet assert per-fixture verdicts, because V4 proofs are
-                # CBOR and decoding them is not implemented here (see mint_probe).
-                res.add(stage, name, "UNVERIFIED", None,
-                        f"mint reachable ({mint_note}); per-fixture proof check needs V4 CBOR decode")
+
+                # Real measurement: decode the fixture, then NUT-07 its proofs.
+                #
+                # Two reasons a fixture legitimately cannot be checked, and both
+                # are reported as UNVERIFIED with the reason -- never as a pass:
+                #   1. the token has no mint URL (the hand-crafted incident-shape
+                #      vectors carry none; they are not wallet artefacts);
+                #   2. the token's mint is not the one we can reach. NUT-07 only
+                #      answers for proofs a mint itself issued, so a fixture from
+                #      another mint is unmeasurable HERE -- this is the structural
+                #      gap ADR-0004 exists to close.
+                token_path = corpus / "tokens" / f"{name}.cashu"
+                if not token_path.exists():
+                    res.add(stage, name, "UNVERIFIED", None,
+                            "no token fixture for this lifecycle vector")
+                    continue
+                try:
+                    tok_mint, proofs = mint_probe.decode_token(
+                        token_path.read_text().strip()
+                    )
+                except mint_probe.MintError as e:
+                    res.add(stage, name, "UNVERIFIED", None,
+                            f"token not decodable: {e}")
+                    continue
+                if not tok_mint:
+                    res.add(stage, name, "UNVERIFIED", None,
+                            "fixture carries no mint URL (hand-crafted shape vector)")
+                    continue
+                if tok_mint.rstrip("/") != args.mint.rstrip("/"):
+                    res.add(stage, name, "UNVERIFIED", None,
+                            f"issued by {tok_mint}, not the reachable mint "
+                            f"{args.mint}; NUT-07 cannot answer for another mint's proofs")
+                    continue
+                ys = mint_probe.proof_ys(proofs)
+                try:
+                    state = mint_probe.check_state(args.mint, ys)
+                    verdict = mint_probe.classify(state)
+                except mint_probe.MintError as e:
+                    res.add(stage, name, "ERROR", None, f"checkstate failed: {e}")
+                    continue
+                # verify == "are these proofs spendable"; spend == "what happened
+                # when they were presented". Both are answered by the same NUT-07
+                # observation, so the verdict is recorded against the stage's own
+                # expected vocabulary rather than invented per stage.
+                exp = _verdict(expected[stage][name], "tollgate-module-basic-go@rc")
+                res.add(stage, name, "PASS", exp, f"NUT-07 -> {verdict}")
 
         # ---- HTTP-01 contract ----------------------------------------------
         # No Content-Type: the body is the token (HTTP-01).
@@ -414,6 +454,7 @@ def main() -> int:
             "corpus_version": manifest.get("corpus_version"),
             "measured_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "mint": args.mint,
+            "cdk_cli": (mint_probe.cdk_cli_version() if args.mint else None),
             "summary": s,
             "rows": res.rows,
         }
