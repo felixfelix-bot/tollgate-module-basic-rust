@@ -139,6 +139,11 @@ impl SessionStore {
                  expiry     INTEGER NOT NULL,
                  granted_at INTEGER NOT NULL
              );
+             CREATE TABLE IF NOT EXISTS closed_usage (
+                 mac        TEXT PRIMARY KEY,
+                 used       INTEGER NOT NULL,
+                 closed_at  INTEGER NOT NULL
+             );
              CREATE TABLE IF NOT EXISTS quotes (
                  quote_id   TEXT PRIMARY KEY,
                  amount     INTEGER NOT NULL,
@@ -287,6 +292,39 @@ impl SessionStore {
             )
             .optional()?;
         Ok(q)
+    }
+
+    /// Record the EXACT final usage of a session at a terminal transition.
+    ///
+    /// ADR-0002: the batched counter can lag by up to 5s or 5% of the allotment, which
+    /// is fine while the session is live. At the moment it closes, the persisted number
+    /// stops being an optimisation and becomes the record a dispute is settled against,
+    /// so it is written exactly once, on close.
+    pub fn record_closed_usage(&self, mac: &str, used: u64) -> Result<(), StoreError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        self.conn.execute(
+            "INSERT INTO closed_usage (mac, used, closed_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(mac) DO UPDATE SET used = excluded.used, closed_at = excluded.closed_at",
+            params![mac, used as i64, now as i64],
+        )?;
+        Ok(())
+    }
+
+    /// The last recorded final usage for a MAC, if it was ever closed.
+    pub fn last_closed_usage(&self, mac: &str) -> Option<u64> {
+        self.conn
+            .query_row(
+                "SELECT used FROM closed_usage WHERE mac = ?1",
+                params![mac],
+                |r| r.get::<_, i64>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .map(|v| v as u64)
     }
 
     pub fn set_quote_state(&self, quote_id: &str, state: &str) -> Result<(), StoreError> {
