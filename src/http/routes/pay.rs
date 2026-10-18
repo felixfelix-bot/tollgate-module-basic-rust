@@ -28,17 +28,39 @@ fn extract_token_from_nostr_event(body: &str) -> Option<String> {
     None
 }
 
-/// A kind-21023 notice carrying the TIP-01 `level` + `code` tags.
+/// Build a signed kind-21023 notice event (TIP-01).
 ///
-/// A2 replaces the remaining hand-built notices with this; A1 needs it because
-/// the new failure paths must not emit bare JSON.
-pub(crate) fn notice_json(code: &str, content: &str) -> String {
-    serde_json::json!({
-        "kind": 21023,
-        "tags": [["level", "error"], ["code", code]],
-        "content": content,
-    })
-    .to_string()
+/// `level` MUST be one of `error` | `warning` | `info` | `debug`. `code` is the
+/// machine-readable vocabulary TIP-01 defines (`payment-error-token-spent`,
+/// `payment-error-mint-not-accepted`, `session-error`,
+/// `upstream-error-not-connected`, ...). `p` is optional and pubkey-only: it is
+/// present only when the notice addresses a specific customer.
+pub(crate) fn build_notice_event(
+    identity: &crate::identity::MerchantIdentity,
+    level: &str,
+    code: &str,
+    content: &str,
+    customer_pubkey: Option<&str>,
+) -> serde_json::Value {
+    let level = match level {
+        "error" | "warning" | "info" | "debug" => level,
+        _ => "error",
+    };
+    let mut tags: Vec<Vec<String>> = Vec::new();
+    if let Some(pk) = customer_pubkey {
+        tags.push(vec!["p".to_string(), pk.to_string()]);
+    }
+    tags.push(vec!["level".to_string(), level.to_string()]);
+    tags.push(vec!["code".to_string(), code.to_string()]);
+
+    let event = crate::nostr_event::create_event(21023, tags, content, &identity.secret_key);
+    serde_json::to_value(&event).unwrap_or_else(|_| serde_json::json!({}))
+}
+
+/// Serialise a notice for an HTTP failure response.
+fn notice_json(identity: &crate::identity::MerchantIdentity, code: &str, content: &str) -> String {
+    serde_json::to_string(&build_notice_event(identity, "error", code, content, None))
+        .unwrap_or_else(|_| "{}".to_string())
 }
 
 /// Allotment for a payment, per TIP-01/TIP-02.
@@ -119,11 +141,11 @@ pub async fn handle_pay(
         match extract_token_from_nostr_event(&body) {
             Some(t) => t,
             None => {
-                let resp = serde_json::json!({
-                    "kind": 21023,
-                    "content": "invalid Nostr kind 21000 event: no payment tag found",
-                });
-                let json = serde_json::to_string(&resp).unwrap_or_default();
+                let json = notice_json(
+                    &state.identity,
+                    "payment-error-token-spent",
+                    "invalid Nostr kind 21000 event: no payment tag found",
+                );
                 return (
                     StatusCode::PAYMENT_REQUIRED,
                     [
@@ -158,11 +180,11 @@ pub async fn handle_pay(
         Ok(amount_msat) => amount_msat,
         Err(e) => {
             tracing::warn!(error = %e, "token verification failed");
-            let resp = serde_json::json!({
-                "kind": 21023,
-                "content": format!("payment rejected: {e}"),
-            });
-            let json = serde_json::to_string(&resp).unwrap_or_default();
+            let json = notice_json(
+                &state.identity,
+                "payment-error-token-spent",
+                &format!("payment rejected: {e}"),
+            );
             return (
                 StatusCode::PAYMENT_REQUIRED,
                 [
@@ -185,11 +207,11 @@ pub async fn handle_pay(
             Err(e) => {
                 tracing::warn!(error = %e, "wallet receive failed");
                 drop(wallet_guard);
-                let resp = serde_json::json!({
-                    "kind": 21023,
-                    "content": format!("payment rejected: wallet receive failed: {e}"),
-                });
-                let json = serde_json::to_string(&resp).unwrap_or_default();
+                let json = notice_json(
+                    &state.identity,
+                    "payment-processing-failed",
+                    &format!("payment rejected: wallet receive failed: {e}"),
+                );
                 return (
                     StatusCode::PAYMENT_REQUIRED,
                     [
@@ -203,11 +225,11 @@ pub async fn handle_pay(
     } else {
         tracing::warn!("wallet not initialized");
         drop(wallet_guard);
-        let resp = serde_json::json!({
-            "kind": 21023,
-            "content": "payment rejected: wallet not initialized",
-        });
-        let json = serde_json::to_string(&resp).unwrap_or_default();
+        let json = notice_json(
+            &state.identity,
+            "session-error",
+            "payment rejected: wallet not initialized",
+        );
         return (
             StatusCode::PAYMENT_REQUIRED,
             [
@@ -238,7 +260,11 @@ pub async fn handle_pay(
     let mint = match mint {
         Ok(m) => m,
         Err(e) => {
-            let json = notice_json("session-error", &format!("payment rejected: {e}"));
+            let json = notice_json(
+                &state.identity,
+                "session-error",
+                &format!("payment rejected: {e}"),
+            );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 [
@@ -259,6 +285,7 @@ pub async fn handle_pay(
         Ok(a) if a > 0 => a,
         Ok(_) => {
             let json = notice_json(
+                &state.identity,
                 "payment-error-token-spent",
                 &format!(
                     "payment of {received_amount} sat does not cover one step at {} sat/step",
@@ -275,7 +302,11 @@ pub async fn handle_pay(
             );
         }
         Err(e) => {
-            let json = notice_json("session-error", &format!("payment rejected: {e}"));
+            let json = notice_json(
+                &state.identity,
+                "session-error",
+                &format!("payment rejected: {e}"),
+            );
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 [
