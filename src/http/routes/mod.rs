@@ -22,4 +22,4 @@ pub mod usage;
 pub mod whoami;
 
 #[cfg(test)]
-mod ln_invoice_live_test;
+mod ln_invoice_contract_test;

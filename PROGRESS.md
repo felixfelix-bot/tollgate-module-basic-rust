@@ -17,3 +17,4 @@ REMEASURE | corpus KG twins regenerated from a reachable mint (tollgate#47); ver
 ADR-0002 | usage counter paid a fsync per metering tick (money rule applied to a cache) | DONE (5s OR 5% OR terminal flush) | src/session/{mod,store,usage_batching_test}.rs
 P3 | /ln-invoice invented quote ids and returned an empty request, so no client could pay | DONE (real BOLT11 from the mint) | src/http/routes/{ln_invoice,ln_invoice_live_test}.rs, src/wallet/wallet.rs
 P4 | two-mint behaviour was untested; the code already keyed wallets by mint | DONE (regression tests, no code change) | src/wallet/{per_mint_test,mod}.rs
+P5 | /ln-invoice shape did not match corpus; PAID quote never minted or granted | PARTIAL: shape fixed, grant hardware-gated | src/http/routes/{ln_invoice,ln_invoice_contract_test}.rs, src/wallet/wallet.rs
