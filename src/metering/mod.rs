@@ -55,13 +55,17 @@ pub fn parse_ndsctl_output(output: &str) -> Result<(u64, u64), MeteringError> {
 
 /// Parse `ndsctl json <mac>` output.
 ///
-/// Shape (nodogsplash 5.x):
+/// MEASURED on nodogsplash 5.0.2 (tollgate-A04E, 2026-10-19) -- the real shape is FLAT:
 /// ```json
-/// {"client_length":1,"clients":{"aa:bb:..":{"downloaded":123,"uploaded":45,...}}}
+/// {"id":1,"ip":"192.168.1.159","mac":"50:76:af:2f:33:ed","state":"Preauthenticated",
+///  "downloaded":0,"uploaded":0,"avg_down_speed":0.00,"avg_up_speed":0.00,...}
 /// ```
-/// Returns `Ok(None)` when the object is `{}` -- that means "this interface has never
-/// seen the client", which is NOT the same as "the client transferred nothing". Folding
-/// those together is what let metering report a confident zero.
+/// An earlier version of this function expected `{"clients":{"<mac>":{...}}}`. That was
+/// invented, not observed, and made the parser return `None` for every real response.
+///
+/// Returns `Ok(None)` when the answer is `{}`: nodogsplash uses that for a client it does
+/// not know. That is ABSENCE, not "transferred nothing" -- folding the two together is
+/// what let metering report a confident zero.
 pub fn parse_ndsctl_json(output: &str) -> Result<Option<(u64, u64)>, MeteringError> {
     let trimmed = output.trim();
     if trimmed.is_empty() || trimmed == "{}" {
@@ -69,20 +73,17 @@ pub fn parse_ndsctl_json(output: &str) -> Result<Option<(u64, u64)>, MeteringErr
     }
     let v: serde_json::Value =
         serde_json::from_str(trimmed).map_err(|e| MeteringError::ParseError(e.to_string()))?;
-    let Some(clients) = v.get("clients").and_then(|c| c.as_object()) else {
-        return Ok(None);
-    };
-    if clients.is_empty() {
-        return Ok(None);
+
+    // Flat object: read the counters directly. A client that is present but has
+    // transferred nothing legitimately reports 0 -- that is a REAL zero and must parse.
+    let down = v.get("downloaded").and_then(|x| x.as_u64());
+    let up = v.get("uploaded").and_then(|x| x.as_u64());
+    match (down, up) {
+        (Some(d), Some(u)) => Ok(Some((d.saturating_add(u), 0))),
+        // No counter fields at all: this is not a client record, so we cannot claim
+        // anything about usage. Absence, not zero.
+        _ => Ok(None),
     }
-    // Sum across entries; a single-MAC query normally yields exactly one.
-    let mut down = 0u64;
-    let mut up = 0u64;
-    for c in clients.values() {
-        down = down.saturating_add(c.get("downloaded").and_then(|x| x.as_u64()).unwrap_or(0));
-        up = up.saturating_add(c.get("uploaded").and_then(|x| x.as_u64()).unwrap_or(0));
-    }
-    Ok(Some((down.saturating_add(up), 0)))
 }
 
 /// Poll usage for a client MAC via `ndsctl json <mac>`.
@@ -162,46 +163,64 @@ mod wiring_test;
 mod ndsctl_json_tests {
     use super::*;
 
-    /// The shape nodogsplash 5.0.2 actually returns for `ndsctl json <mac>`.
-    /// Measured on the bench, not assumed.
+    /// The real response, captured verbatim from nodogsplash 5.0.2 on tollgate-A04E.
+    /// Flat object, not the nested `{"clients":{...}}` an earlier version assumed.
+    const MEASURED: &str = r#"{
+    "id":1,
+    "ip":"192.168.1.159",
+    "mac":"50:76:af:2f:33:ed",
+    "added":0,
+    "active":1792420671,
+    "duration":0,
+    "token":"47d4a1bf",
+    "state":"Preauthenticated",
+    "downloaded":1200,
+    "avg_down_speed":0.00,
+    "uploaded":300,
+    "avg_up_speed":0.00
+    }"#;
+
     #[test]
-    fn parses_the_real_json_shape() {
-        let out = r#"{"client_length":1,"clients":{"50:76:af:2f:33:ed":{"downloaded":1200,"uploaded":300,"session_start":1,"session_end":2}}}"#;
-        let got = parse_ndsctl_json(out).expect("must parse");
+    fn parses_the_measured_flat_shape() {
+        let got = parse_ndsctl_json(MEASURED).expect("must parse");
         assert_eq!(got, Some((1500, 0)), "used = downloaded + uploaded");
     }
 
-    /// `{}` means the managed interface has never seen this MAC.
-    ///
-    /// This is the distinction the old code destroyed: it reported (0, 0) for BOTH
-    /// "no traffic yet" and "no such client", so metering silently claimed zero.
+    /// The invented nested shape must NOT be silently accepted as a client record.
+    #[test]
+    fn nested_clients_shape_is_not_a_client_record() {
+        let invented = r#"{"clients":{"aa:bb:cc:dd:ee:ff":{"downloaded":5,"uploaded":5}}}"#;
+        assert_eq!(
+            parse_ndsctl_json(invented).expect("parses as JSON"),
+            None,
+            "the nested shape was invented; real ndsctl is flat"
+        );
+    }
+
+    /// `{}` means nodogsplash does not know this client -- absence, not zero.
     #[test]
     fn empty_object_is_absence_not_zero() {
         assert_eq!(parse_ndsctl_json("{}").expect("parses"), None);
         assert_eq!(parse_ndsctl_json("").expect("parses"), None);
     }
 
-    /// A client genuinely present with zero bytes IS a real zero.
+    /// A present client with no traffic IS a real zero.
     #[test]
     fn present_client_with_no_traffic_is_a_real_zero() {
-        let out = r#"{"clients":{"aa:bb:cc:dd:ee:ff":{"downloaded":0,"uploaded":0}}}"#;
+        let out =
+            r#"{"mac":"aa:bb:cc:dd:ee:ff","state":"Preauthenticated","downloaded":0,"uploaded":0}"#;
         assert_eq!(parse_ndsctl_json(out).expect("parses"), Some((0, 0)));
     }
 
-    /// Garbage is an error, never a silent zero.
     #[test]
     fn malformed_output_is_an_error() {
         assert!(parse_ndsctl_json("Unknown command: state").is_err());
     }
 
-    /// The old line format must NOT be what we parse any more -- `ndsctl state` is not
-    /// a command in nodogsplash 5.x, so any parser keyed to it can only ever yield 0.
+    /// The legacy `download:`/`upload:` lines came from `ndsctl state`, a command that
+    /// does not exist. Those lines must not be accepted as a client record.
     #[test]
-    fn legacy_line_format_is_not_accepted_as_json() {
-        let legacy = "download: 1234\nupload: 5678";
-        assert!(
-            parse_ndsctl_json(legacy).is_err(),
-            "the legacy `download:`/`upload:` shape came from a command that does not exist"
-        );
+    fn legacy_line_format_is_not_accepted() {
+        assert!(parse_ndsctl_json("download: 1234\nupload: 5678").is_err());
     }
 }
