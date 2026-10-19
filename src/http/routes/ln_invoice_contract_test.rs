@@ -191,6 +191,7 @@ async fn paid_quote_mints_tokens_and_grants_access() {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let resp = handle_get_ln_invoice(
             State(state.clone()),
+            axum::http::HeaderMap::new(),
             Query(InvoiceQuery {
                 quote: quote.clone(),
                 mac: Some("aa:bb:cc:dd:ee:99".to_string()),

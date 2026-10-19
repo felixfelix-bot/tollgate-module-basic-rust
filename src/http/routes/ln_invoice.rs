@@ -204,8 +204,27 @@ pub async fn handle_create_ln_invoice(
     json(StatusCode::OK, &body)
 }
 
+/// Resolve the paying device from the request's address headers.
+///
+/// Extracted so the header plumbing is TESTABLE. The original bug was that the handler
+/// called the resolver with three literal `None`s, and no test could see it because
+/// identity resolution sat after minting and was unreachable without a live mint.
+///
+/// `resolve` is injected so a test can prove the header VALUES arrive, without needing a
+/// DHCP lease on the test machine.
+pub(crate) fn resolve_device(
+    forwarded: Option<&str>,
+    real_ip: Option<&str>,
+    socket_ip: Option<&str>,
+    resolve: impl FnOnce(&str) -> Option<String>,
+) -> Option<String> {
+    let ip = crate::http::mac::client_ip_from_headers(forwarded, real_ip, socket_ip)?;
+    resolve(&ip)
+}
+
 pub async fn handle_get_ln_invoice(
     State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
     Query(q): Query<InvoiceQuery>,
 ) -> impl IntoResponse {
     let found = registry(&state)
@@ -329,12 +348,25 @@ pub async fn handle_get_ln_invoice(
     // The device identifier comes from the network; `mac` in the query is accepted for
     // wire compatibility and deliberately ignored (HTTP-03), because it is
     // client-controlled and honouring it would let a device claim another's paid session.
-    // Same resolution A3 established for /pay: address -> lease/ARP -> MAC. The query
-    // `mac` is intentionally NOT consulted (it is client-controlled).
-    let device = crate::http::mac::client_ip_from_headers(None, None, None)
-        .as_deref()
-        .and_then(crate::http::mac::resolve_client_mac_default)
-        .map(|r| r.mac);
+    // Same resolution A3 established for /pay: address -> lease/ARP -> MAC.
+    //
+    // The three `None`s here were a real bug: the handler never received the request's
+    // headers, so the resolver was called with no input and could never succeed. A paid
+    // quote therefore always answered "the device could not be identified" and minted
+    // nothing. `/pay` had the same information and worked; this handler simply did not
+    // ask for it.
+    //
+    // The query `mac` is deliberately NOT consulted: it is client-controlled, and
+    // honouring it would let a device claim another's paid session.
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+    let socket_ip = headers
+        .get("x-tollgate-socket-addr")
+        .and_then(|v| v.to_str().ok());
+
+    let device = resolve_device(forwarded, real_ip, socket_ip, |ip| {
+        crate::http::mac::resolve_client_mac_default(ip).map(|r| r.mac)
+    });
     let Some(mac) = device else {
         // Paid, but we cannot say who to. Refuse rather than grant to a sentinel.
         return err(
