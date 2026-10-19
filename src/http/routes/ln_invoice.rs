@@ -377,17 +377,27 @@ pub async fn handle_get_ln_invoice(
 
     {
         let mut sessions = state.sessions.lock().await;
-        sessions.create_session(
-            &mac,
-            allotment,
-            DEFAULT_METRIC,
-            quote.expiry.saturating_sub(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            ),
+        // Reuse the session if one already exists for this device.
+        //
+        // WHY: granting while a session is live must extend it, not replace it. Replacing
+        // discards the client's current usage, so a device that buys twice mid-session
+        // would appear to have consumed nothing — the exact accounting divergence the
+        // corpus's `spent` verdicts exist to catch.
+        //
+        // It also makes the grant IDEMPOTENT. A client polls GET; without this, a second
+        // poll mints nothing (correct) but would still rewrite the session row.
+        let secs = quote.expiry.saturating_sub(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
         );
+        if sessions
+            .extend_session(&mac, allotment, DEFAULT_METRIC, secs)
+            .is_none()
+        {
+            sessions.create_session(&mac, allotment, DEFAULT_METRIC, secs);
+        }
     }
     registry(&state)
         .lock()

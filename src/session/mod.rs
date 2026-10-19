@@ -176,6 +176,31 @@ impl SessionManager {
 
     /// Check whether the session for `mac` is active (not expired, usage
     /// under allotment). Returns false if no session exists.
+    /// Add `extra` to a live session's allotment, preserving usage.
+    ///
+    /// A second purchase must EXTEND a session, not replace it. Replacing would reset
+    /// `used`, so a device that bought again mid-session would appear to have consumed
+    /// nothing — an accounting divergence, not a convenience.
+    ///
+    /// Returns the new allotment, or `None` when there is no live session to extend.
+    pub fn extend_session(
+        &mut self,
+        mac: &str,
+        extra: u64,
+        metric: &str,
+        ttl_secs: u64,
+    ) -> Option<u64> {
+        let (used, total) = {
+            let s = self.sessions.get(mac)?;
+            (s.used, s.allotment.saturating_add(extra))
+        };
+        // `create_session` persists the row; restore `used` afterwards so the extension
+        // is additive rather than resetting the client's consumption to zero.
+        self.create_session(mac, total, metric, ttl_secs);
+        self.update_usage(mac, used);
+        Some(total)
+    }
+
     pub fn is_active(&self, mac: &str) -> bool {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

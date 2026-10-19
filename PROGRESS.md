@@ -20,3 +20,4 @@ P5 | /ln-invoice shape did not match corpus; PAID quote never minted or granted 
 P5a | aarch64 musl cross-build was recorded as blocked; it is not - musl.cc toolchain works | DONE (verified on hardware) | ci/cross-build-aarch64.sh
 P5b | /balance returned a wallet dump, not the corpus client-session shape; found on hardware | DONE (verified on device) | src/http/routes/{balance,balance_contract_test}.rs
 P5c | runner had no way to measure a DEPLOYED gateway; added --url mode and ran it against A04E | DONE (13 PASS on hardware) | ci/conformance_runner.py, conformance/verdicts-hardware-a04e.json
+P5d | /balance had the same three-None identity bug; second grant reset usage instead of extending | DONE (grant measured on hardware) | src/http/routes/{balance,balance_contract_test,purchase_path_test}.rs, src/session/mod.rs
