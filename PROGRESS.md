@@ -23,3 +23,4 @@ P5c | runner had no way to measure a DEPLOYED gateway; added --url mode and ran 
 P5d | /balance had the same three-None identity bug; second grant reset usage instead of extending | DONE (grant measured on hardware) | src/http/routes/{balance,balance_contract_test,purchase_path_test}.rs, src/session/mod.rs
 P5e | measured grant E2E + additive top-up + /balance session visibility on A04E | DONE (3 PASS measured) | conformance/hardware-grant-e2e-a04e.json
 P5f | metering called `ndsctl state`, which does not exist; usage was a permanent silent zero | command+parser fixed, HW round-trip UNVERIFIED | src/metering/mod.rs
+P5g | parser expected an INVENTED nested shape; real ndsctl output is flat | fixed against captured bytes, counters still UNVERIFIED | src/metering/mod.rs
