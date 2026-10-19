@@ -133,8 +133,12 @@ pub async fn poll_usage_with(
     ndsctl: impl AsRef<std::path::Path>,
     mac: &str,
 ) -> Result<UsageReading, MeteringError> {
+    // Same command fix as `poll_usage`: `ndsctl state` does not exist in nodogsplash 5.x.
+    // `poll_usage_with` was missed when `poll_usage` was corrected, and it is the one
+    // `/usage` actually calls -- so `/usage` stayed a permanent zero even after the first
+    // fix landed. Two near-identical functions, one fixed: worth noting as a real hazard.
     let output = tokio::process::Command::new(ndsctl.as_ref())
-        .args(["state", mac])
+        .args(["json", mac])
         .output()
         .await
         .map_err(|e| MeteringError::NotFound(e.to_string()))?;
@@ -145,8 +149,16 @@ pub async fn poll_usage_with(
         ));
     }
 
-    let (used, _total) = parse_ndsctl_output(&String::from_utf8_lossy(&output.stdout))?;
-    Ok(UsageReading { used, live: true })
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // `{}` is absence, not zero: nodogsplash does not know this MAC. Sliding through a
+    // confident 0 here is exactly the silent-zero failure this whole lane exists to kill.
+    match parse_ndsctl_json(&stdout)? {
+        Some((used, _total)) => Ok(UsageReading { used, live: true }),
+        None => Err(MeteringError::ParseError(format!(
+            "ndsctl has no record of {mac} (returned {})",
+            stdout.trim()
+        ))),
+    }
 }
 
 /// Poll using the router's `ndsctl`.
@@ -222,5 +234,120 @@ mod ndsctl_json_tests {
     #[test]
     fn legacy_line_format_is_not_accepted() {
         assert!(parse_ndsctl_json("download: 1234\nupload: 5678").is_err());
+    }
+}
+
+/// The result of trying to open the gate for a client.
+///
+/// These are deliberately NOT collapsed into a bool. "Client unknown to nodogsplash" and
+/// "nodogsplash refused" and "nodogsplash is not installed" have completely different
+/// operator responses, and a paid customer hitting any of them needs to be told something
+/// true rather than a generic failure.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GateOutcome {
+    /// nodogsplash confirmed the client is authenticated.
+    Opened,
+    /// nodogsplash does not know this MAC: it has never sent HTTP through the managed
+    /// interface. MEASURED 2026-10-19: `ndsctl auth <mac>` answers
+    /// "Failed to authenticate client <mac>" for such a MAC, and `ndsctl clients` does not
+    /// list it. This is the normal state for a client that has not yet been intercepted.
+    UnknownClient,
+    /// nodogsplash answered, but not with success.
+    Refused(String),
+    /// ndsctl could not be run at all (wrong binary path, permissions, not OpenWrt).
+    Unavailable(String),
+}
+
+/// Open the gate for `mac` by authenticating it with nodogsplash.
+///
+/// WHY THIS EXISTS: the module read usage but never opened the gate. A customer could pay,
+/// receive a session record, and still be blocked by nodogsplash — the portal was
+/// decorative. Metering a client that was never let through measures nothing.
+/// Decide the outcome from what the tool said.
+///
+/// Separated from process spawning so the decision is testable WITHOUT executing a file.
+/// The first version of these tests wrote a fake `ndsctl` to a temp path and exec'd it,
+/// which intermittently failed with **ETXTBSY ("Text file busy")** — a Linux race where
+/// `execve` sees a still-open writable fd from the writer thread. That flake made the
+/// suite fail ~3 runs in 10 and, worse, hid which assertion was actually being exercised.
+/// Pure input in, verdict out, is both faster and honest.
+pub fn classify_gate_output(success: bool, text: &str) -> GateOutcome {
+    let lower = text.to_lowercase();
+
+    // nodogsplash's own wording, measured on 5.0.2:
+    //   success: "Client <mac> authenticated."
+    //   unknown: "Failed to authenticate client <mac>."
+    if lower.contains("failed to authenticate") {
+        return GateOutcome::UnknownClient;
+    }
+    // Silence is NOT success: exit 0 alone must never be read as "the gate is open".
+    if lower.contains("authenticated") && success {
+        return GateOutcome::Opened;
+    }
+    GateOutcome::Refused(text.trim().to_string())
+}
+
+pub async fn open_gate_with(ndsctl: impl AsRef<std::path::Path>, mac: &str) -> GateOutcome {
+    let out = tokio::process::Command::new(ndsctl.as_ref())
+        .args(["auth", mac])
+        .output()
+        .await;
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::Unavailable(e.to_string()),
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    classify_gate_output(out.status.success(), &text)
+}
+
+/// Open the gate using the `ndsctl` on PATH.
+pub async fn open_gate(mac: &str) -> GateOutcome {
+    open_gate_with("ndsctl", mac).await
+}
+
+#[cfg(test)]
+mod gate_tests {
+    use super::*;
+
+    /// Measured success line from nodogsplash 5.0.2.
+    #[test]
+    fn measured_success_line_is_opened() {
+        let out = classify_gate_output(true, "Client aa:bb:cc:dd:ee:ff authenticated.\n");
+        assert_eq!(out, GateOutcome::Opened);
+    }
+
+    /// Measured rejection for a MAC nodogsplash has never intercepted.
+    #[test]
+    fn measured_unknown_client_is_its_own_outcome() {
+        let out = classify_gate_output(false, "Failed to authenticate client aa:bb:cc:dd:ee:ff.\n");
+        assert_eq!(out, GateOutcome::UnknownClient);
+    }
+
+    /// Exit 0 with no output is NOT success. A silent tool must never read as an open gate.
+    #[test]
+    fn silent_exit_zero_is_not_opened() {
+        assert_ne!(classify_gate_output(true, ""), GateOutcome::Opened);
+    }
+
+    /// The success word with a FAILING exit status is a refusal.
+    #[test]
+    fn success_word_but_failed_status_is_refused() {
+        assert!(matches!(
+            classify_gate_output(false, "Client authenticated."),
+            GateOutcome::Refused(_)
+        ));
+    }
+
+    /// Unrelated output is preserved verbatim so the operator sees the tool's own words.
+    #[test]
+    fn other_failure_keeps_the_message() {
+        match classify_gate_output(false, "socket not ready\n") {
+            GateOutcome::Refused(m) => assert!(m.contains("socket not ready"), "got {m}"),
+            other => panic!("expected Refused, got {other:?}"),
+        }
     }
 }
