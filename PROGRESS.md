@@ -20,3 +20,4 @@ P4 | two-mint behaviour was untested; the code already keyed wallets by mint | D
 P5 | /ln-invoice shape did not match corpus; PAID quote never minted or granted | PARTIAL: shape fixed, grant hardware-gated | src/http/routes/{ln_invoice,ln_invoice_contract_test}.rs, src/wallet/wallet.rs
 P5a | aarch64 musl cross-build was recorded as blocked; it is not - musl.cc toolchain works | DONE (verified on hardware) | ci/cross-build-aarch64.sh
 P5b | /balance returned a wallet dump, not the corpus client-session shape; found on hardware | DONE (verified on device) | src/http/routes/{balance,balance_contract_test}.rs
+P5c | runner had no way to measure a DEPLOYED gateway; added --url mode and ran it against A04E | DONE (13 PASS on hardware) | ci/conformance_runner.py, conformance/verdicts-hardware-a04e.json

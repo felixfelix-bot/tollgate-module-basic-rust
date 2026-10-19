@@ -52,6 +52,17 @@ import urllib.request
 
 BINARY = os.environ.get("TOLLGATE_BIN", "target/debug/tollgate-module-basic-rust")
 
+# When set (via --url), the runner drives an ALREADY-RUNNING gateway instead of
+# spawning one. `None` means spawn mode.
+TARGET: tuple[str, int] | None = None
+
+
+def _host_port(url: str) -> tuple[str, int]:
+    """`http://host:port[/]` -> (host, port). Bare host means port 80."""
+    u = url.split("://", 1)[-1].rstrip("/")
+    host, _, port = u.partition(":")
+    return host or "127.0.0.1", int(port) if port else 80
+
 
 def free_port() -> int:
     with socket.socket() as s:
@@ -59,12 +70,12 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_ready(port: int, timeout: float = 20.0) -> bool:
+def wait_ready(port: int, timeout: float = 20.0, host: str = "127.0.0.1") -> bool:
     """Poll until the daemon answers. No blind sleep."""
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=1) as r:
+            with urllib.request.urlopen(f"http://{host}:{port}/", timeout=1) as r:
                 if r.status in (200, 402):
                     return True
         except urllib.error.HTTPError as e:
@@ -74,6 +85,11 @@ def wait_ready(port: int, timeout: float = 20.0) -> bool:
             pass
         time.sleep(0.15)
     return False
+
+
+def _target() -> tuple[str, int] | None:
+    """The explicit target when driving a live gateway; None in spawn mode."""
+    return TARGET
 
 
 def raw_post(port: int, path: str, body: bytes, content_type: str | None) -> tuple[int, str]:
@@ -86,9 +102,12 @@ def raw_post(port: int, path: str, body: bytes, content_type: str | None) -> tup
     """
     import socket as _s
 
+    tgt = _target()
+    host = tgt[0] if tgt else "127.0.0.1"
+    tgt_port = tgt[1] if tgt else port
     head = [
         f"POST {path} HTTP/1.1",
-        f"Host: 127.0.0.1:{port}",
+        f"Host: {host}:{tgt_port}",
         "X-Forwarded-For: 192.168.1.50",
         "Connection: close",
     ]
@@ -97,7 +116,7 @@ def raw_post(port: int, path: str, body: bytes, content_type: str | None) -> tup
     head.append(f"Content-Length: {len(body)}")
     raw = ("\r\n".join(head) + "\r\n\r\n").encode() + body
 
-    with _s.create_connection(("127.0.0.1", port), timeout=10) as sock:
+    with _s.create_connection((host, tgt_port), timeout=10) as sock:
         sock.sendall(raw)
         chunks = []
         while True:
@@ -117,17 +136,12 @@ def raw_post(port: int, path: str, body: bytes, content_type: str | None) -> tup
 
 def post(port: int, path: str, body: bytes, content_type: str | None) -> tuple[int, str]:
     return raw_post(port, path, body, content_type)
-    # A believable client address so MAC resolution has something to look at.
-    req.add_header("x-forwarded-for", "192.168.1.50")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return r.status, r.read().decode("utf-8", "replace")
-    except urllib.error.HTTPError as e:
-        return e.code, e.read().decode("utf-8", "replace")
 
 
 def get(port: int, path: str) -> tuple[int, str]:
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method="GET")
+    tgt = _target()
+    host = tgt[0] if tgt else "127.0.0.1"
+    req = urllib.request.Request(f"http://{host}:{port}{path}", method="GET")
     req.add_header("x-forwarded-for", "192.168.1.50")
     try:
         with urllib.request.urlopen(req, timeout=10) as r:
@@ -208,7 +222,18 @@ def main() -> int:
     ap.add_argument("--corpus", required=True)
     ap.add_argument("--mint", default=None, help="live mint URL; without it, verify/spend stay UNVERIFIED")
     ap.add_argument("--out", default=None, help="write the verdict set as JSON here")
+    ap.add_argument(
+        "--url",
+        default=None,
+        help="drive an ALREADY-RUNNING gateway at this base URL instead of spawning "
+        "one (e.g. http://192.168.1.1:2121). Use this to measure a deployed device; "
+        "the device's own config applies, not the runner's.",
+    )
     args = ap.parse_args()
+
+    global TARGET
+    if args.url:
+        TARGET = _host_port(args.url)
 
     corpus = pathlib.Path(args.corpus).expanduser()
     manifest_path = corpus / "manifest.json"
@@ -225,33 +250,45 @@ def main() -> int:
         print(f"FATAL: binary not found at {BINARY} (run: cargo build)", file=sys.stderr)
         return 2
 
-    tmp = tempfile.mkdtemp(prefix="tg-conf-")
-    port = free_port()
-    env = dict(os.environ)
-    env["TOLLGATE_TEST_CONFIG_DIR"] = tmp
-    env["TOLLGATE_BIND"] = f"127.0.0.1:{port}"
-    env["RUST_LOG"] = "warn"
+    # --url mode: the gateway is already running on the device. We do NOT spawn
+    # anything, do NOT create a throwaway config, and measure exactly what the
+    # operator deployed. The binary-existence check is skipped for the same
+    # reason: there is nothing local to execute.
+    if TARGET:
+        if not wait_ready(TARGET[1], timeout=10.0, host=TARGET[0]):
+            print(f"FATAL: no gateway answering at {args.url}", file=sys.stderr)
+            return 2
+        proc = None
+        port = TARGET[1]
+    else:
+        tmp = tempfile.mkdtemp(prefix="tg-conf-")
+        port = free_port()
+        env = dict(os.environ)
+        env["TOLLGATE_TEST_CONFIG_DIR"] = tmp
+        env["TOLLGATE_BIND"] = f"127.0.0.1:{port}"
+        env["RUST_LOG"] = "warn"
 
-    # A config with no mints: the daemon starts, but every payment fails at mint
-    # selection. That is enough to exercise DECODE (structure) and the HTTP
-    # contract, and it is why verify/spend cannot be certified this way.
-    cfg = {
-        "metric": "bytes",
-        "step_size": 1000,
-        "accepted_mints": [{"url": args.mint, "price_per_step": 1, "price_unit": "sats"}]
-        if args.mint
-        else [],
-        "listen": f"127.0.0.1:{port}",
-    }
-    (pathlib.Path(tmp) / "config.json").write_text(json.dumps(cfg))
+        # A config with no mints: the daemon starts, but every payment fails at mint
+        # selection. That is enough to exercise DECODE (structure) and the HTTP
+        # contract, and it is why verify/spend cannot be certified this way.
+        cfg = {
+            "metric": "bytes",
+            "step_size": 1000,
+            "accepted_mints": [{"url": args.mint, "price_per_step": 1, "price_unit": "sats"}]
+            if args.mint
+            else [],
+            "listen": f"127.0.0.1:{port}",
+        }
+        (pathlib.Path(tmp) / "config.json").write_text(json.dumps(cfg))
 
-    proc = subprocess.Popen(
-        [BINARY], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+        proc = subprocess.Popen(
+            [BINARY], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+        )
     res = Result()
     try:
-        if not wait_ready(port):
+        if not TARGET and not wait_ready(port):
             print("FATAL: daemon did not become ready", file=sys.stderr)
+            assert proc is not None
             proc.terminate()
             out = proc.communicate(timeout=5)[0]
             print(out[-2000:], file=sys.stderr)
@@ -412,11 +449,12 @@ def main() -> int:
         res.add("http03-usage", "shape", "PASS" if ok else "FAIL", "-1/-1 or used/total", f"HTTP {st} {body[:40]}")
 
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
 
     s = res.summary()
     print("\n=== corpus conformance — tollgate-module-basic-rust ===")
