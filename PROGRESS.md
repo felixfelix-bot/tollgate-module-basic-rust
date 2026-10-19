@@ -26,3 +26,4 @@ P5f | metering called `ndsctl state`, which does not exist; usage was a permanen
 P5g | parser expected an INVENTED nested shape; real ndsctl output is flat | fixed against captured bytes, counters still UNVERIFIED | src/metering/mod.rs
 P5h | module never called ndsctl auth; /usage still on the dead `state` command; suite flaky 3/10 | DONE unit+HW-reachable, counters UNVERIFIED | src/metering/{mod,wiring_test,}.rs, src/http/routes/ln_invoice.rs, src/config/tests.rs
 P5i | metering round trip measured end to end: pay->gate->bytes counted->/usage live | DONE (MEASURED) | conformance/metering-round-trip-measured.json
+P5j | whole chain repeatable as one command | DONE — lane PASS on hardware | ci/hardware_roundtrip.py
