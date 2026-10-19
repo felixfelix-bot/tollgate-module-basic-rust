@@ -29,3 +29,6 @@ mod balance_contract_test;
 
 #[cfg(test)]
 mod ln_invoice_identity_test;
+
+#[cfg(test)]
+mod purchase_path_test;

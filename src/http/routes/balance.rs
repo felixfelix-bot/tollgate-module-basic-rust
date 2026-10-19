@@ -60,12 +60,27 @@ impl IntoString for ActiveSession {
     }
 }
 
-pub async fn handle_balance(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn handle_balance(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+) -> impl IntoResponse {
     // The device identity determines WHICH session is being described. Resolution is the
     // same path A3 established for /pay and /usage; without it we cannot say whose
     // balance this is, and answering with someone else's would be worse than answering
     // with none.
-    let mac = crate::http::mac::client_ip_from_headers(None, None, None)
+    //
+    // The three `None`s here were the same bug just fixed in `/ln-invoice`: the handler
+    // never received the request's headers, so the resolver was called with no input and
+    // ALWAYS returned None. Measured on hardware: a client holding a live 4000-byte
+    // session was told `session_active: false`, because this handler could not look the
+    // session up.
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+    let socket_ip = headers
+        .get("x-tollgate-socket-addr")
+        .and_then(|v| v.to_str().ok());
+
+    let mac = crate::http::mac::client_ip_from_headers(forwarded, real_ip, socket_ip)
         .as_deref()
         .and_then(crate::http::mac::resolve_client_mac_default)
         .map(|r| r.mac);

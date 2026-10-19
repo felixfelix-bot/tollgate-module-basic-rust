@@ -48,7 +48,9 @@ fn empty_state() -> AppState {
 /// all, so the JSON parsed but every field a client looked for was missing.
 #[tokio::test]
 async fn no_session_matches_corpus_shape() {
-    let resp = handle_balance(State(empty_state())).await.into_response();
+    let resp = handle_balance(State(empty_state()), axum::http::HeaderMap::new())
+        .await
+        .into_response();
     let (status, v) = body_of(resp).await;
 
     assert_eq!(status, 200);
@@ -73,7 +75,9 @@ async fn no_session_matches_corpus_shape() {
 /// already, so a method check here could never fail. It belongs to a route-table test.
 #[tokio::test]
 async fn metric_and_allotment_only_appear_when_a_session_is_active() {
-    let resp = handle_balance(State(empty_state())).await.into_response();
+    let resp = handle_balance(State(empty_state()), axum::http::HeaderMap::new())
+        .await
+        .into_response();
     let (_, v) = body_of(resp).await;
     // Corpus `no-session` lists only status/session_active/mac. Emitting `allotment: 0`
     // for a device with no session would be a fabricated measurement -- indistinguishable
