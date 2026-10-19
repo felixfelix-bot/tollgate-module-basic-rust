@@ -24,3 +24,4 @@ P5d | /balance had the same three-None identity bug; second grant reset usage in
 P5e | measured grant E2E + additive top-up + /balance session visibility on A04E | DONE (3 PASS measured) | conformance/hardware-grant-e2e-a04e.json
 P5f | metering called `ndsctl state`, which does not exist; usage was a permanent silent zero | command+parser fixed, HW round-trip UNVERIFIED | src/metering/mod.rs
 P5g | parser expected an INVENTED nested shape; real ndsctl output is flat | fixed against captured bytes, counters still UNVERIFIED | src/metering/mod.rs
+P5h | module never called ndsctl auth; /usage still on the dead `state` command; suite flaky 3/10 | DONE unit+HW-reachable, counters UNVERIFIED | src/metering/{mod,wiring_test,}.rs, src/http/routes/ln_invoice.rs, src/config/tests.rs

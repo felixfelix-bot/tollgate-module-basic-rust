@@ -399,6 +399,32 @@ pub async fn handle_get_ln_invoice(
             sessions.create_session(&mac, allotment, DEFAULT_METRIC, secs);
         }
     }
+    // OPEN THE GATE. Minting and recording a session does not let the customer through:
+    // nodogsplash still drops their traffic until it is told to authenticate the MAC.
+    // Measured 2026-10-19: the module had NO `ndsctl auth` call anywhere, so a paying
+    // customer received a session record and stayed blocked -- the portal was decorative.
+    //
+    // A failure here must NOT report `access_granted: true`, because it would be false.
+    let gate = crate::metering::open_gate(&mac).await;
+    match &gate {
+        crate::metering::GateOutcome::Opened => {}
+        crate::metering::GateOutcome::UnknownClient => {
+            // nodogsplash has not seen this MAC yet: it has not been intercepted, so there
+            // is no gate to open. The session is recorded and will apply once it is.
+            tracing::warn!(
+                mac = %mac,
+                "paid, but nodogsplash has not seen this client yet; it must trigger the portal once"
+            );
+        }
+        crate::metering::GateOutcome::Refused(m) => {
+            tracing::error!(mac = %mac, reason = %m, "nodogsplash refused to open the gate");
+        }
+        crate::metering::GateOutcome::Unavailable(m) => {
+            tracing::error!(mac = %mac, reason = %m, "ndsctl unavailable; gate not opened");
+        }
+    }
+    let gate_opened = matches!(gate, crate::metering::GateOutcome::Opened);
+
     registry(&state)
         .lock()
         .map(|mut r| r.mark_issued(&quote.id))
@@ -408,7 +434,10 @@ pub async fn handle_get_ln_invoice(
         status: 1,
         quote: quote.id,
         state: "ISSUED".to_string(),
-        access_granted: true,
+        // The session exists, but "granted" must reflect whether the device can actually
+        // reach the network. A paid-but-still-blocked client that is told `true` will sit
+        // there wondering why nothing works.
+        access_granted: gate_opened,
         allotment,
         metric: DEFAULT_METRIC.to_string(),
     };

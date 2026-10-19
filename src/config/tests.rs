@@ -100,6 +100,24 @@ fn rand_hex() -> String {
     format!("{nanos:x}")
 }
 
+/// Serializes every test that touches `TOLLGATE_TEST_CONFIG_DIR`.
+///
+/// WHY: the config path is resolved from a PROCESS-GLOBAL environment variable, and cargo
+/// runs tests in the same process on many threads. Six tests here set and unset it
+/// concurrently, so one test's `remove_var` lands in the middle of another's assertions --
+/// measured as intermittent failures in `loads_identities` and
+/// `default_config_path_is_etc_tollgate` (~2 runs in 12).
+///
+/// A lock is the correct fix rather than retries: the shared mutable state is real, and no
+/// amount of retrying makes concurrent mutation of one env var safe.
+static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    // A poisoned lock only means some other test panicked; the env var itself is still
+    // usable, and failing here would replace one flake with another.
+    ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
 fn with_test_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "tollgate-test-{}-{}",
@@ -116,6 +134,7 @@ fn with_test_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
 
 #[test]
 fn default_config_path_is_etc_tollgate() {
+    let _g = env_guard();
     std::env::remove_var("TOLLGATE_TEST_CONFIG_DIR");
     assert_eq!(
         config_path(),
@@ -133,6 +152,7 @@ fn default_config_path_is_etc_tollgate() {
 
 #[test]
 fn config_path_honors_test_config_dir() {
+    let _g = env_guard();
     let dir = std::env::temp_dir().join(format!("tollgate-cfg-test-{}", rand_hex()));
     fs::create_dir_all(&dir).unwrap();
     std::env::set_var("TOLLGATE_TEST_CONFIG_DIR", &dir);
@@ -145,6 +165,7 @@ fn config_path_honors_test_config_dir() {
 
 #[test]
 fn config_dir_reports_correct_directory() {
+    let _g = env_guard();
     std::env::remove_var("TOLLGATE_TEST_CONFIG_DIR");
     assert_eq!(config_dir(), std::path::Path::new("/etc/tollgate"));
     let dir = std::env::temp_dir().join(format!("tollgate-cfg-test-{}", rand_hex()));
@@ -256,6 +277,7 @@ fn empty_config_file_returns_none() {
 
 #[test]
 fn loads_identities() {
+    let _g = env_guard();
     with_test_dir(&[("identities.json", IDENTITIES_JSON)]);
     let ids = load_identities()
         .expect("identities should load")
