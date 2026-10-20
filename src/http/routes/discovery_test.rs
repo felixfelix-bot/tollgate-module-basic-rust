@@ -43,7 +43,7 @@ async fn discovery_json(config: Config) -> Value {
             crate::http::routes::quote::MintQuoteRegistry::new(),
         )),
     };
-    let app = crate::http::create_router(state);
+    let app = crate::http::create_test_router(state);
     let resp = app
         .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
         .await
