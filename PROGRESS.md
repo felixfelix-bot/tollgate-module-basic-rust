@@ -28,3 +28,4 @@ P5h | module never called ndsctl auth; /usage still on the dead `state` command;
 P5i | metering round trip measured end to end: pay->gate->bytes counted->/usage live | DONE (MEASURED) | conformance/metering-round-trip-measured.json
 P5j | whole chain repeatable as one command | DONE — lane PASS on hardware | ci/hardware_roundtrip.py
 P6a | ADR-0006 close path: sweep+deauth+continuity; live-counter sync bug found on HW | DONE unit+mutation, loop UNVERIFIED pending re-grant fix | src/session/{mod,gate_close_test}.rs, src/metering/mod.rs, src/main.rs
+P6b | GET re-polls re-granted 1000->12000 (measured); pure poll_grant_decision + Issued mark as idempotency token | FIXED, unit+mutation green; HW re-measure next | src/http/routes/ln_invoice.rs
