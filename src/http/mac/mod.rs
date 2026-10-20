@@ -206,3 +206,23 @@ pub fn client_ip_from_headers(
     }
     socket_addr.map(|s| s.to_string())
 }
+
+/// ADR-0007 §2: stamp the identity headers onto an already-built response.
+///
+/// Chosen over widening every handler's return tuple: axum's `IntoResponse` is
+/// implemented for fixed-size header arrays but NOT for `Vec<(&str, String)`, so
+/// threading the dynamic pair through return types fails to compile. Stamping the
+/// built response keeps one implementation for all five handlers.
+pub fn stamp_identity_headers(
+    mut resp: axum::response::Response,
+    extra: &[(&'static str, String)],
+) -> axum::response::Response {
+    for (k, v) in extra {
+        if let Ok(val) = axum::http::HeaderValue::from_str(v) {
+            if let Ok(name) = axum::http::HeaderName::from_bytes(k.as_bytes()) {
+                resp.headers_mut().insert(name, val);
+            }
+        }
+    }
+    resp
+}

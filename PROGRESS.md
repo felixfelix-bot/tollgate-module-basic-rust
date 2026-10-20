@@ -35,3 +35,4 @@ P6e | hardware verdict set re-measured WITH live mint: PASS 13->17, verify/spend
 P6f | security: XFF trust = LAN identity forgery (curl away); Go origin pins socket-scoped contract, Rust diverges all 3 points | ADR-0007 proposed, §3 open | docs/adr/0007-identity-is-the-socket.md
 P7a | identity from TCP peer per ADR-0007 §3(a); XFF trust closed | DONE unit+mutation; HW unverified | src/http/mac/mod.rs src/http/*.rs src/config/schema.rs
 P7b | ADR-0007 Accepted, §3=(a) implemented #54 | HW verification outstanding | docs/adr/0007-identity-is-the-socket.md
+P7c | ADR-0007 §2 wire headers (named identity + ignored claim) via middleware | DONE unit+mutation; HW unverified | src/http/mod.rs src/http/wire_identity_test.rs
