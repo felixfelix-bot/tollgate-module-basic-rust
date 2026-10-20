@@ -33,7 +33,7 @@ fn app() -> axum::Router {
             crate::http::routes::quote::MintQuoteRegistry::new(),
         )),
     };
-    crate::http::create_router(state)
+    crate::http::create_test_router(state)
 }
 
 async fn post(content_type: Option<&str>, body: Vec<u8>) -> (StatusCode, String) {

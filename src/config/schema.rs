@@ -37,6 +37,15 @@ pub struct Config {
     pub upstream_session_manager: UpstreamSessionManagerConfig,
     #[serde(default)]
     pub upstream_wifi: UpstreamWifiConfig,
+    /// ADR-0007 §3(a): identity is the TCP peer (default, the safe one). Set to
+    /// false ONLY when a proxy fronts the module and is responsible for
+    /// overwriting the identity headers — then the header is trusted by contract.
+    #[serde(default = "default_identity_from_socket")]
+    pub identity_from_socket: bool,
+}
+
+fn default_identity_from_socket() -> bool {
+    true
 }
 
 fn default_log_level() -> String {
@@ -87,6 +96,7 @@ impl Config {
             upstream_detector: UpstreamDetectorConfig::default(),
             upstream_session_manager: UpstreamSessionManagerConfig::default(),
             upstream_wifi: UpstreamWifiConfig::default(),
+            identity_from_socket: true,
         }
     }
 

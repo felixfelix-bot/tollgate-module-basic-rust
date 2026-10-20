@@ -12,7 +12,7 @@
 //! remaining allotment.
 
 use crate::http::AppState;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::Serialize;
@@ -62,6 +62,7 @@ impl IntoString for ActiveSession {
 
 pub async fn handle_balance(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     // The device identity determines WHICH session is being described. Resolution is the
@@ -74,16 +75,10 @@ pub async fn handle_balance(
     // ALWAYS returned None. Measured on hardware: a client holding a live 4000-byte
     // session was told `session_active: false`, because this handler could not look the
     // session up.
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
-    let socket_ip = headers
-        .get("x-tollgate-socket-addr")
-        .and_then(|v| v.to_str().ok());
-
-    let mac = crate::http::mac::client_ip_from_headers(forwarded, real_ip, socket_ip)
-        .as_deref()
-        .and_then(crate::http::mac::resolve_client_mac_default)
-        .map(|r| r.mac);
+    // ADR-0007 §1: identity is the TCP peer; the header block above is retained only
+    // as the documented proxied-deployment escape hatch (config `identity_from_socket`).
+    let (mac, _extra) =
+        crate::http::mac::resolve_client(Some(peer), &headers, state.config.identity_from_socket);
 
     let body = match mac {
         Some(ref m) => {

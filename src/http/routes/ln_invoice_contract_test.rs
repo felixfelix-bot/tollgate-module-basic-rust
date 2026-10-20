@@ -17,6 +17,7 @@ use crate::http::routes::ln_invoice::{
 };
 use crate::http::routes::quote::MintQuoteRegistry;
 use crate::http::AppState;
+use axum::extract::ConnectInfo;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
 use std::sync::{Arc, Mutex};
@@ -191,6 +192,7 @@ async fn paid_quote_mints_tokens_and_grants_access() {
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
         let resp = handle_get_ln_invoice(
             State(state.clone()),
+            ConnectInfo(std::net::SocketAddr::from(([192, 168, 1, 50], 44444))),
             axum::http::HeaderMap::new(),
             Query(InvoiceQuery {
                 quote: quote.clone(),

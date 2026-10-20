@@ -140,7 +140,13 @@ async fn main() {
             .await
             .unwrap_or_else(|e| panic!("failed to bind {bind}: {e}"));
         tracing::info!(bind = %bind, "HTTP server listening");
-        axum::serve(listener, app).await.expect("HTTP server error");
+        // ADR-0007: ConnectInfo must reach the handlers, so the app is wrapped here.
+        axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .expect("HTTP server error");
     });
 
     // ADR-0006 §5 (continuity): a module restart is our fault, not the customer's.

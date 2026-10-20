@@ -118,6 +118,10 @@ fn env_guard() -> std::sync::MutexGuard<'static, ()> {
     ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// NOTE: this deliberately does NOT take `env_guard`. Callers must hold it, because
+/// `std::sync::Mutex` is not reentrant: when both the helper and its caller locked,
+/// every `loads_*` test blocked forever and the suite hung (measured 2026-10-20).
+/// The lock is taken at exactly one level — the test — and this helper just mutates.
 fn with_test_dir(files: &[(&str, &str)]) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
         "tollgate-test-{}-{}",
@@ -178,6 +182,9 @@ fn config_dir_reports_correct_directory() {
 
 #[test]
 fn loads_full_production_config() {
+    // with_test_dir mutates the process-global TOLLGATE_TEST_CONFIG_DIR; without the
+    // guard this test raced the other env-mutating tests and flaked ~1 in 15 runs.
+    let _g = env_guard();
     with_test_dir(&[
         ("config.json", PRODUCTION_CONFIG_JSON),
         ("identities.json", IDENTITIES_JSON),
@@ -254,6 +261,7 @@ fn loads_full_production_config() {
 
 #[test]
 fn missing_config_file_returns_none() {
+    let _g = env_guard();
     let dir = std::env::temp_dir().join(format!("tollgate-missing-{}", rand_hex()));
     fs::create_dir_all(&dir).unwrap();
     std::env::set_var("TOLLGATE_TEST_CONFIG_DIR", &dir);
@@ -265,6 +273,7 @@ fn missing_config_file_returns_none() {
 
 #[test]
 fn empty_config_file_returns_none() {
+    let _g = env_guard();
     let dir = std::env::temp_dir().join(format!("tollgate-empty-{}", rand_hex()));
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join("config.json"), "").unwrap();
@@ -304,6 +313,7 @@ fn loads_identities() {
 
 #[test]
 fn loads_install_config() {
+    let _g = env_guard();
     with_test_dir(&[("install.json", INSTALL_JSON)]);
     let inst = load_install().expect("install should load").expect("Some");
     assert_eq!(inst.config_version, "v0.0.2");

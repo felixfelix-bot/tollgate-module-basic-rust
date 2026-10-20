@@ -12,7 +12,7 @@
 
 use crate::http::routes::quote::{MintQuoteRegistry, QuoteState};
 use crate::http::AppState;
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use serde::{Deserialize, Serialize};
@@ -270,6 +270,7 @@ pub(crate) fn resolve_device(
 
 pub async fn handle_get_ln_invoice(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: axum::http::HeaderMap,
     Query(q): Query<InvoiceQuery>,
 ) -> impl IntoResponse {
@@ -346,15 +347,10 @@ pub async fn handle_get_ln_invoice(
     //
     // The query `mac` is deliberately NOT consulted: it is client-controlled, and
     // honouring it would let a device claim another's paid session.
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
-    let socket_ip = headers
-        .get("x-tollgate-socket-addr")
-        .and_then(|v| v.to_str().ok());
-
-    let device = resolve_device(forwarded, real_ip, socket_ip, |ip| {
-        crate::http::mac::resolve_client_mac_default(ip).map(|r| r.mac)
-    });
+    // ADR-0007 §1: identity is the TCP peer; the escape hatch (identity_from_socket
+    // = false) restores header trust for proxied deployments by config, not by default.
+    let (device, _extra) =
+        crate::http::mac::resolve_client(Some(peer), &headers, state.config.identity_from_socket);
     let Some(mac) = device else {
         // Paid, but we cannot say who to. Refuse rather than grant to a sentinel.
         return err(

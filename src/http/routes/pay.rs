@@ -6,7 +6,7 @@
 
 use crate::http::AppState;
 use crate::wallet::verify::TokenVerifier;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
@@ -136,6 +136,7 @@ pub(crate) fn build_session_event(
 
 pub async fn handle_pay(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
     headers: HeaderMap,
     body: String,
 ) -> impl IntoResponse {
@@ -315,35 +316,29 @@ pub async fn handle_pay(
     // Pre-A3 this was the literal `00:00:00:00:00:00`, which meant `/usage`
     // could never match a session and metering silently did nothing. A resolution
     // failure is now refused explicitly rather than papered over with a sentinel.
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
-    let socket_ip = headers
-        .get("x-tollgate-socket-addr")
-        .and_then(|v| v.to_str().ok());
-
-    let device_identifier =
-        match crate::http::mac::client_ip_from_headers(forwarded, real_ip, socket_ip)
-            .as_deref()
-            .and_then(crate::http::mac::resolve_client_mac_default)
-        {
-            Some(resolved) => resolved.mac,
-            None => {
-                tracing::warn!("payment refused: could not resolve the client device identity");
-                let json = notice_json(
-                    &state.identity,
-                    "session-error",
-                    "could not resolve the client device identity from DHCP leases or ARP",
-                );
-                return (
-                    StatusCode::BAD_REQUEST,
-                    [
-                        ("content-type", "application/json"),
-                        ("access-control-allow-origin", "*"),
-                    ],
-                    json,
-                );
-            }
-        };
+    // ADR-0007 §1: identity is the TCP peer (config-gated escape hatch for proxied
+    // deployments); the header path remains only for `identity_from_socket = false`.
+    let (device_opt, _extra) =
+        crate::http::mac::resolve_client(Some(peer), &headers, state.config.identity_from_socket);
+    let device_identifier = match device_opt {
+        Some(resolved) => resolved,
+        None => {
+            tracing::warn!("payment refused: could not resolve the client device identity");
+            let json = notice_json(
+                &state.identity,
+                "session-error",
+                "could not resolve the client device identity from DHCP leases or ARP",
+            );
+            return (
+                StatusCode::BAD_REQUEST,
+                [
+                    ("content-type", "application/json"),
+                    ("access-control-allow-origin", "*"),
+                ],
+                json,
+            );
+        }
+    };
 
     // Step 3: create session.
     //

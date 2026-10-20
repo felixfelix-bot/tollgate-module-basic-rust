@@ -92,6 +92,95 @@ pub fn resolve_client_mac_default(ip: &str) -> Option<ResolvedMac> {
     resolve_client_mac(ip, DEFAULT_LEASE_PATH, DEFAULT_ARP_PATH)
 }
 
+/// ADR-0007 §2: the identity headers a caller may write, and the response headers
+/// that make ignoring visible. Mirrors the Go origin's wire contract.
+pub const HEADER_CLIENT_MAC: &str = "X-TollGate-Client-MAC";
+pub const HEADER_CLAIM_IGNORED: &str = "X-TollGate-MAC-Claim-Ignored";
+
+/// ADR-0007: resolve the client's IP from the socket/header pair per the mode flag,
+/// then MAC via lease/ARP. Returns (mac, header pairs to put on the response).
+///
+/// One helper so every client-scoped handler makes the SAME decision — the header-trust
+/// bug existed partly because five handlers each re-derived identity.
+pub fn resolve_client(
+    socket_peer: Option<std::net::SocketAddr>,
+    headers: &axum::http::HeaderMap,
+    identity_from_socket: bool,
+) -> (Option<String>, Vec<(&'static str, String)>) {
+    let socket_str = socket_peer.map(|a| a.ip().to_string());
+    let header_claim = crate::http::mac::client_ip_from_headers(
+        headers.get("x-forwarded-for").and_then(|v| v.to_str().ok()),
+        headers.get("x-real-ip").and_then(|v| v.to_str().ok()),
+        headers
+            .get("x-tollgate-socket-addr")
+            .and_then(|v| v.to_str().ok()),
+    );
+    let ident = crate::http::mac::client_identity(
+        socket_str.as_deref(),
+        header_claim.as_deref(),
+        identity_from_socket,
+    );
+    let mut out_headers = Vec::new();
+    if let Some(claim) = &ident.ignored_header_claim {
+        out_headers.push((HEADER_CLAIM_IGNORED, claim.clone()));
+    }
+    let mac = ident
+        .ip
+        .as_deref()
+        .and_then(resolve_client_mac_default)
+        .map(|r| r.mac);
+    if let Some(m) = &mac {
+        out_headers.push((HEADER_CLIENT_MAC, m.clone()));
+    }
+    (mac, out_headers)
+}
+
+/// ADR-0007: the resolved client identity plus what was ignored.
+///
+/// `ignored_header_claim` exists because "ignored" must not mean "silently ignored":
+/// the Go origin's contract test records that a silent ignore once sent an operator
+/// hunting "the gate never opened" when the answer simply named a different client.
+/// Responses report it via `X-TollGate-MAC-Claim-Ignored` naming the claimed address.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ClientIdentity {
+    /// The address that decides identity.
+    pub ip: Option<String>,
+    /// A caller-supplied header address that did NOT decide, if any.
+    pub ignored_header_claim: Option<String>,
+}
+
+/// ADR-0007 §1/§3(a): which address is the client?
+///
+/// `identity_from_socket` (default true): identity is the TCP peer's address. A
+/// header claiming an address is ignored AND reported — never silently.
+///
+/// `identity_from_socket = false` is the documented proxied-deployment escape hatch:
+/// a proxy fronts the module and is responsible for overwriting the header, so the
+/// header's value is trusted by contract. The default is the safe one; the flag is
+/// auditable and deliberate.
+///
+/// In socket mode with NO socket address, identity is ABSENT — no silent fallback to
+/// the header, or any not-yet-wired route becomes a forgery path again.
+pub fn client_identity(
+    socket_peer: Option<&str>,
+    header_claim: Option<&str>,
+    identity_from_socket: bool,
+) -> ClientIdentity {
+    if identity_from_socket {
+        ClientIdentity {
+            ip: socket_peer.map(|s| s.to_string()),
+            ignored_header_claim: header_claim
+                .filter(|h| Some(*h) != socket_peer)
+                .map(|s| s.to_string()),
+        }
+    } else {
+        ClientIdentity {
+            ip: header_claim.map(|s| s.to_string()),
+            ignored_header_claim: None,
+        }
+    }
+}
+
 /// Parse an `X-Forwarded-For` / `X-Real-Ip` style header into a bare address.
 ///
 /// Only the *address* is taken from the header; the MAC still comes from the

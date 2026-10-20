@@ -7,21 +7,20 @@
 
 use crate::http::mac;
 use crate::http::AppState;
-use axum::extract::State;
+use axum::extract::{ConnectInfo, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 
-pub async fn handle_usage(State(state): State<AppState>, headers: HeaderMap) -> impl IntoResponse {
+pub async fn handle_usage(
+    State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<std::net::SocketAddr>,
+    headers: HeaderMap,
+) -> impl IntoResponse {
     // A3: the session is keyed on the resolved MAC, so this must resolve the
-    // SAME identity the payment handler used. Keying on X-Forwarded-For (the
-    // pre-A3 behaviour) could never match a session created under a MAC.
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    let real = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
-
-    let mac = mac::client_ip_from_headers(forwarded, real, None)
-        .as_deref()
-        .and_then(mac::resolve_client_mac_default)
-        .map(|r| r.mac);
+    // SAME identity the payment handler used. ADR-0007 §1: that identity is the
+    // TCP peer, not a header the caller writes.
+    let (mac, _extra) =
+        mac::resolve_client(Some(peer), &headers, state.config.identity_from_socket);
 
     let Some(mac) = mac else {
         return usage_response("-1/-1");
@@ -86,11 +85,14 @@ mod tests {
     //! regardless of what the handler did, including while it answered `-1/-1`
     //! for every caller. These drive the real handler through the router.
 
+    use super::{handle_usage, HeaderMap};
     use crate::config::schema::Config;
     use crate::http::AppState;
     use crate::session::SessionManager;
     use axum::body::Body;
+    use axum::extract::{ConnectInfo, State};
     use axum::http::{Request, StatusCode};
+    use axum::response::IntoResponse;
     use std::sync::Arc;
     use tower::ServiceExt;
 
@@ -118,10 +120,22 @@ mod tests {
         for (k, v) in headers {
             b = b.header(*k, *v);
         }
-        let resp = crate::http::create_router(state)
-            .oneshot(b.body(Body::empty()).unwrap())
-            .await
-            .unwrap();
+        // Call the HANDLER directly with a ConnectInfo, per ADR-0007's seam
+        // discipline: identity now comes from the socket argument, so the test
+        // supplies it explicitly rather than through the router's service stack.
+        let resp = handle_usage(
+            State(state),
+            ConnectInfo(std::net::SocketAddr::from(([192, 168, 1, 50], 44444))),
+            headers.iter().fold(HeaderMap::new(), |mut hm, (k, v)| {
+                hm.insert(
+                    axum::http::HeaderName::from_bytes(k.as_bytes()).unwrap(),
+                    axum::http::HeaderValue::from_str(v).unwrap(),
+                );
+                hm
+            }),
+        )
+        .await
+        .into_response();
         assert_eq!(resp.status(), StatusCode::OK);
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
             .await
