@@ -1,13 +1,13 @@
 {
   "consumer": "tollgate-module-basic-rust",
   "corpus_version": "v1",
-  "measured_at": "2026-10-19T12:53:04Z",
-  "mint": null,
-  "cdk_cli": null,
+  "measured_at": "2026-10-20T07:45:00Z",
+  "mint": "http://127.0.0.1:3338",
+  "cdk_cli": "cdk-cli 0.18.1",
   "summary": {
-    "pass": 13,
+    "pass": 17,
     "fail": 0,
-    "unverified": 14,
+    "unverified": 10,
     "error": 0
   },
   "rows": [
@@ -63,100 +63,100 @@
     {
       "stage": "verify",
       "fixture": "v4_v2_kg181",
-      "verdict": "UNVERIFIED",
+      "verdict": "PASS",
       "expected": "unknown",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "note": "NUT-07 -> ok"
     },
     {
       "stage": "verify",
       "fixture": "v3_v2_kg181",
-      "verdict": "UNVERIFIED",
+      "verdict": "PASS",
       "expected": "unknown",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "note": "NUT-07 -> ok"
     },
     {
       "stage": "verify",
       "fixture": "v3_v2_valid",
       "verdict": "UNVERIFIED",
-      "expected": "ok",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "verify",
       "fixture": "v4_v2_valid",
       "verdict": "UNVERIFIED",
-      "expected": "ok",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "verify",
       "fixture": "v3_v2_truncated_id",
       "verdict": "UNVERIFIED",
-      "expected": "ok",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "verify",
       "fixture": "v3_v2_hex_c",
       "verdict": "UNVERIFIED",
-      "expected": "reject-c-encoding",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "verify",
       "fixture": "v3_v2_full66",
       "verdict": "UNVERIFIED",
-      "expected": "unknown",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "spend",
       "fixture": "v4_v2_kg181",
-      "verdict": "UNVERIFIED",
+      "verdict": "PASS",
       "expected": "unknown",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "note": "NUT-07 -> ok"
     },
     {
       "stage": "spend",
       "fixture": "v3_v2_kg181",
-      "verdict": "UNVERIFIED",
+      "verdict": "PASS",
       "expected": "unknown",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "note": "NUT-07 -> ok"
     },
     {
       "stage": "spend",
       "fixture": "v3_v2_valid",
       "verdict": "UNVERIFIED",
-      "expected": "accepted-1022",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "spend",
       "fixture": "v4_v2_valid",
       "verdict": "UNVERIFIED",
-      "expected": "accepted-1022",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "spend",
       "fixture": "v3_v2_truncated_id",
       "verdict": "UNVERIFIED",
-      "expected": "accepted-1022",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "spend",
       "fixture": "v3_v2_hex_c",
       "verdict": "UNVERIFIED",
-      "expected": "rejected-21023",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "spend",
       "fixture": "v3_v2_full66",
       "verdict": "UNVERIFIED",
-      "expected": "accepted-1022",
-      "note": "requires a live mint (NUT-07); offline run cannot certify"
+      "expected": null,
+      "note": "issued by http://192.168.13.221:8383, not the reachable mint http://127.0.0.1:3338; NUT-07 cannot answer for another mint's proofs"
     },
     {
       "stage": "http01-post",
@@ -201,7 +201,11 @@
       "note": "HTTP 200 -1/-1"
     }
   ],
-  "measured_on": "tollgate-A04E (GL-MT6000, OpenWrt 24.10.2, aarch64) via --url http://192.168.1.1:2121",
-  "binary_sha256": "902613c6d04b338c22da27a3d3f91c997e8d2d2c4baed974fac7185ed4e2a095",
-  "note": "Verdict set produced against the DEPLOYED aarch64 binary on real hardware, not a locally-spawned process. No --mint was supplied, so verify/spend remain UNVERIFIED by design: NUT-07 needs a live mint the device is configured to trust."
+  "device": "tollgate-A04E (GL-MT6000, OpenWrt 24.10.2, nodogsplash 5.0.2), deployed aarch64 musl static binary",
+  "binary_sha256": "f61ea8101d6ebdfbd078ed7f209ac54e5da20ba6a232c9a57048f04f748fa5df",
+  "git_main_at_measurement": "b89939b (PRs #47-#51: ADR-0006 gate lifecycle)",
+  "mode": "--url (drives the deployed gateway at http://192.168.1.1:2121); --mint http://127.0.0.1:3338 (the same mint/keyset that minted the kg181 twins)",
+  "keyset_match": "kg181 twins keyset 01df97b6fb8a572a == live mint keyset (same mnemonic) \u2014 NUT-07 answers for these proofs",
+  "improvement": "PASS 13 -> 17: verify+spend for both kg181 twins are now REAL NUT-07 measurements instead of no-mint UNVERIFIED",
+  "remaining_unverified": "10 rows: all twins whose proofs were minted by the dead mint 192.168.13.221:8383 (structurally unmeasurable from this bench; ADR-0004's reachable-mint principle)"
 }
