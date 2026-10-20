@@ -19,6 +19,52 @@ use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 
 /// Fallback quote lifetime when the mint does not state one.
+
+/// The decision a GET poll makes, extracted so it is testable without a router.
+///
+/// WHY THIS EXISTS: the ISSUED branch's comment claimed "fall through to the grant
+/// report below" as if it were a report, but the code below MINTS AND GRANTS on
+/// every poll. Measured on A04E: 12 polls of a settled quote grew the allotment
+/// 1000 -> 12000 — a customer refreshing their invoice status minted themselves
+/// free bandwidth. The decision of WHETHER to grant must be pure and testable.
+///
+/// The quote registry's `Issued` mark is the idempotency token: a quote that has
+/// already granted once must NEVER grant again, regardless of what the poll says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PollDecision {
+    /// Quote is unpaid: report pending, no grant.
+    ReportPending,
+    /// Money arrived and this quote has not granted yet: mint + grant (once).
+    Grant,
+    /// Already granted for this quote: report the EXISTING grant. No mint, no
+    /// allotment change. This is what makes GET idempotent.
+    ReportExistingGrant,
+}
+
+/// Decide what a GET poll should do.
+///
+/// `mint_state` is the mint's own word (UNPAID/PAID/ISSUED); `already_issued` is
+/// whether OUR registry has marked this quote as granted.
+pub fn poll_grant_decision(mint_state: &str, already_issued: bool) -> PollDecision {
+    match (mint_state, already_issued) {
+        ("UNPAID", _) => PollDecision::ReportPending,
+        // PAID, never granted: grant now.
+        ("PAID", false) => PollDecision::Grant,
+        // PAID but we already granted (e.g. mint state lagged behind our mark):
+        // report the existing grant, never re-grant.
+        ("PAID", true) => PollDecision::ReportExistingGrant,
+        // ISSUED means the mint already minted for this quote. If we have not
+        // marked it granted, this is our first observation: grant (which will
+        // find existing tokens or mint idempotently). If we HAVE marked it, this
+        // is a re-poll: report, never re-grant.
+        ("ISSUED", false) => PollDecision::Grant,
+        ("ISSUED", true) => PollDecision::ReportExistingGrant,
+        // Unknown state: report pending rather than grant on a guess. Coercing an
+        // unknown state to a grant would hand out bandwidth on malformed input.
+        _ => PollDecision::ReportPending,
+    }
+}
+
 const DEFAULT_QUOTE_TTL_SECS: u64 = 15 * 60;
 /// Steps granted per sat, from the corpus's own `price_per_step = 1` default.
 const DEFAULT_METRIC: &str = "bytes";
@@ -287,19 +333,80 @@ pub async fn handle_get_ln_invoice(
         return json(StatusCode::OK, &body);
     }
 
-    // ISSUED means we already minted for this quote. Re-minting returns
-    // "Request already paid" from the mint, so this path must NOT call mint_tokens
-    // again -- it reports the grant it already made. Idempotency lives here because
-    // the client may poll GET repeatedly.
-    if state_str == "ISSUED" {
-        if let Ok(reg) = registry(&state).lock() {
-            if let Some(_q) = reg.get(&quote.id) {
-                // fall through to the grant report below
-            }
+    // The device identifier comes from the network; `mac` in the query is accepted for
+    // wire compatibility and deliberately ignored (HTTP-03), because it is
+    // client-controlled and honouring it would let a device claim another's paid session.
+    // Same resolution A3 established for /pay: address -> lease/ARP -> MAC.
+    //
+    // The three `None`s here were a real bug: the handler never received the request's
+    // headers, so the resolver was called with no input and could never succeed. A paid
+    // quote therefore always answered "the device could not be identified" and minted
+    // nothing. `/pay` had the same information and worked; this handler simply did not
+    // ask for it.
+    //
+    // The query `mac` is deliberately NOT consulted: it is client-controlled, and
+    // honouring it would let a device claim another's paid session.
+    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
+    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
+    let socket_ip = headers
+        .get("x-tollgate-socket-addr")
+        .and_then(|v| v.to_str().ok());
+
+    let device = resolve_device(forwarded, real_ip, socket_ip, |ip| {
+        crate::http::mac::resolve_client_mac_default(ip).map(|r| r.mac)
+    });
+    let Some(mac) = device else {
+        // Paid, but we cannot say who to. Refuse rather than grant to a sentinel.
+        return err(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "payment received but the device could not be identified; retry from the client",
+        );
+    };
+
+    // Idempotency: has OUR registry already granted for this quote?
+    let already_issued = registry(&state)
+        .lock()
+        .map(|r| {
+            r.get(&quote.id)
+                .map(|q| q.state == QuoteState::Issued)
+                .unwrap_or(false)
+        })
+        .unwrap_or(false);
+
+    match poll_grant_decision(&state_str, already_issued) {
+        PollDecision::ReportPending => {
+            let body = PendingStatus {
+                status: 1,
+                quote: quote.id.clone(),
+                state: state_str,
+                access_granted: false,
+            };
+            return json(StatusCode::OK, &body);
         }
+        PollDecision::ReportExistingGrant => {
+            // Re-poll of a settled quote: report the grant that ALREADY exists.
+            // No mint, no allotment change. This is what makes GET idempotent;
+            // before this, every poll re-granted (measured: 1000 -> 12000).
+            let sessions = state.sessions.lock().await;
+            let (allotment, granted) = match sessions.get_session(&mac) {
+                Some(s) => (s.allotment, true),
+                None => (0, false),
+            };
+            drop(sessions);
+            let body = PaidStatus {
+                status: 1,
+                quote: quote.id.clone(),
+                state: "ISSUED".to_string(),
+                access_granted: granted,
+                allotment,
+                metric: DEFAULT_METRIC.to_string(),
+            };
+            return json(StatusCode::OK, &body);
+        }
+        PollDecision::Grant => {}
     }
 
-    // PAID (or ISSUED): the money arrived, so MINT and GRANT.
+    // PAID (or first ISSUED observation): the money arrived, so MINT and GRANT.
     //
     // This is the step that was missing entirely. `mint_tokens` had never been called
     // from production code, so a customer could pay an invoice and get nothing.
@@ -344,36 +451,6 @@ pub async fn handle_get_ln_invoice(
         .map(|m| m.price_per_step.max(1))
         .unwrap_or(1);
     let allotment = (minted / price_per_step) * step_size;
-
-    // The device identifier comes from the network; `mac` in the query is accepted for
-    // wire compatibility and deliberately ignored (HTTP-03), because it is
-    // client-controlled and honouring it would let a device claim another's paid session.
-    // Same resolution A3 established for /pay: address -> lease/ARP -> MAC.
-    //
-    // The three `None`s here were a real bug: the handler never received the request's
-    // headers, so the resolver was called with no input and could never succeed. A paid
-    // quote therefore always answered "the device could not be identified" and minted
-    // nothing. `/pay` had the same information and worked; this handler simply did not
-    // ask for it.
-    //
-    // The query `mac` is deliberately NOT consulted: it is client-controlled, and
-    // honouring it would let a device claim another's paid session.
-    let forwarded = headers.get("x-forwarded-for").and_then(|v| v.to_str().ok());
-    let real_ip = headers.get("x-real-ip").and_then(|v| v.to_str().ok());
-    let socket_ip = headers
-        .get("x-tollgate-socket-addr")
-        .and_then(|v| v.to_str().ok());
-
-    let device = resolve_device(forwarded, real_ip, socket_ip, |ip| {
-        crate::http::mac::resolve_client_mac_default(ip).map(|r| r.mac)
-    });
-    let Some(mac) = device else {
-        // Paid, but we cannot say who to. Refuse rather than grant to a sentinel.
-        return err(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "payment received but the device could not be identified; retry from the client",
-        );
-    };
 
     {
         let mut sessions = state.sessions.lock().await;
@@ -443,4 +520,62 @@ pub async fn handle_get_ln_invoice(
         metric: DEFAULT_METRIC.to_string(),
     };
     json(StatusCode::OK, &body)
+}
+
+#[cfg(test)]
+mod poll_decision_tests {
+    use super::*;
+
+    /// THE measured bug: 12 polls of a settled quote grew allotment 1000 -> 12000.
+    /// A quote our registry has already granted must NEVER grant again.
+    #[test]
+    fn re_polling_an_issued_quote_never_regrants() {
+        assert_eq!(
+            poll_grant_decision("ISSUED", true),
+            PollDecision::ReportExistingGrant
+        );
+    }
+
+    /// First observation of ISSUED: grant (idempotently at the mint), then mark.
+    #[test]
+    fn first_issued_observation_grants() {
+        assert_eq!(poll_grant_decision("ISSUED", false), PollDecision::Grant);
+    }
+
+    /// PAID and never granted: grant once.
+    #[test]
+    fn paid_and_ungranted_grants_once() {
+        assert_eq!(poll_grant_decision("PAID", false), PollDecision::Grant);
+    }
+
+    /// PAID but already granted (mint state lagging behind our mark): report.
+    #[test]
+    fn paid_but_already_granted_reports() {
+        assert_eq!(
+            poll_grant_decision("PAID", true),
+            PollDecision::ReportExistingGrant
+        );
+    }
+
+    /// UNPAID never grants, whatever our registry thinks.
+    #[test]
+    fn unpaid_never_grants() {
+        assert_eq!(
+            poll_grant_decision("UNPAID", false),
+            PollDecision::ReportPending
+        );
+        assert_eq!(
+            poll_grant_decision("UNPAID", true),
+            PollDecision::ReportPending
+        );
+    }
+
+    /// Unknown state must not hand out bandwidth on malformed input.
+    #[test]
+    fn unknown_state_is_pending_not_grant() {
+        assert_eq!(
+            poll_grant_decision("GARBAGE", false),
+            PollDecision::ReportPending
+        );
+    }
 }
