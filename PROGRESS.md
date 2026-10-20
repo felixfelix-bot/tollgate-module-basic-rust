@@ -33,3 +33,4 @@ P6c | ADR-0006 loop measured on HW: idempotency PASS (12 polls, flat 1000), swee
 P6d | §5 boot continuity measured: SIGKILL -> restart -> gate restored, session intact (2000 allotment, live usage 8) | DONE — MEASURED | conformance/boot-continuity-measured.json
 P6e | hardware verdict set re-measured WITH live mint: PASS 13->17, verify/spend kg181 twins now real NUT-07 | DONE — MEASURED | conformance/verdicts-hardware-a04e.json
 P6f | security: XFF trust = LAN identity forgery (curl away); Go origin pins socket-scoped contract, Rust diverges all 3 points | ADR-0007 proposed, §3 open | docs/adr/0007-identity-is-the-socket.md
+P7a | identity from TCP peer per ADR-0007 §3(a); XFF trust closed | DONE unit+mutation; HW unverified | src/http/mac/mod.rs src/http/*.rs src/config/schema.rs

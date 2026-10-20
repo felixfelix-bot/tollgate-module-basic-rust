@@ -44,3 +44,17 @@ pub fn create_router(state: AppState) -> Router {
         .layer(cors)
         .with_state(state)
 }
+
+/// Test-only router with a mocked ConnectInfo, so handler tests can drive the
+/// real service stack (ADR-0007 requires handlers to take ConnectInfo).
+#[cfg(test)]
+pub fn create_test_router(state: AppState) -> Router {
+    use axum::extract::connect_info::MockConnectInfo;
+    create_router(state).layer(MockConnectInfo(std::net::SocketAddr::from((
+        [192, 168, 1, 50],
+        44444,
+    ))))
+}
+
+#[cfg(test)]
+mod identity_test;

@@ -6,6 +6,7 @@
 use crate::http::routes::balance::handle_balance;
 use crate::http::AppState;
 use crate::session::SessionManager;
+use axum::extract::ConnectInfo;
 use axum::extract::State;
 use axum::http::HeaderMap;
 use axum::response::IntoResponse;
@@ -58,7 +59,16 @@ async fn balance_sees_a_live_session_for_the_requesting_device() {
     let mut headers = HeaderMap::new();
     headers.insert("x-forwarded-for", "192.168.1.159".parse().unwrap());
 
-    let (status, v) = body_of(handle_balance(State(state), headers).await.into_response()).await;
+    let (status, v) = body_of(
+        handle_balance(
+            State(state),
+            ConnectInfo(std::net::SocketAddr::from(([192, 168, 1, 50], 44444))),
+            headers,
+        )
+        .await
+        .into_response(),
+    )
+    .await;
     assert_eq!(status, 200);
     // With no resolvable lease the answer must be the no-session shape, NOT a crash and
     // NOT a fabricated session. The hardware run covers the resolvable case.
