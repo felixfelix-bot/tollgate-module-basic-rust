@@ -27,3 +27,4 @@ P5g | parser expected an INVENTED nested shape; real ndsctl output is flat | fix
 P5h | module never called ndsctl auth; /usage still on the dead `state` command; suite flaky 3/10 | DONE unit+HW-reachable, counters UNVERIFIED | src/metering/{mod,wiring_test,}.rs, src/http/routes/ln_invoice.rs, src/config/tests.rs
 P5i | metering round trip measured end to end: pay->gate->bytes counted->/usage live | DONE (MEASURED) | conformance/metering-round-trip-measured.json
 P5j | whole chain repeatable as one command | DONE — lane PASS on hardware | ci/hardware_roundtrip.py
+P6a | ADR-0006 close path: sweep+deauth+continuity; live-counter sync bug found on HW | DONE unit+mutation, loop UNVERIFIED pending re-grant fix | src/session/{mod,gate_close_test}.rs, src/metering/mod.rs, src/main.rs

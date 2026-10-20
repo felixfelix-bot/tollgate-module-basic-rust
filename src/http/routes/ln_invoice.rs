@@ -408,6 +408,7 @@ pub async fn handle_get_ln_invoice(
     let gate = crate::metering::open_gate(&mac).await;
     match &gate {
         crate::metering::GateOutcome::Opened => {}
+        crate::metering::GateOutcome::Closed => {}
         crate::metering::GateOutcome::UnknownClient => {
             // nodogsplash has not seen this MAC yet: it has not been intercepted, so there
             // is no gate to open. The session is recorded and will apply once it is.
