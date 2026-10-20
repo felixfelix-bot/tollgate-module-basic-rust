@@ -16,6 +16,7 @@ reasoning is the point.
 | [0004](0004-corpus-fixtures-from-testnut.md) | Corpus fixtures come from a reachable mint, regenerable by script | Accepted |
 | [0005](0005-licence-undecided.md) | Licence remains undecided | Open — deliberately |
 | [0006](0006-gate-close-and-durability.md) | Close the gate, and keep it open across restarts | Accepted — measured (#49, #50) |
+| [0007](0007-identity-is-the-socket.md) | Identity is the socket, not a header a caller can write | Proposed — §3 needs a decision |
 
 ## Writing one
 
