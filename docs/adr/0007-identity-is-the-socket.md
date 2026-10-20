@@ -1,6 +1,7 @@
 # ADR-0007: Identity is the socket, not a header a caller can write
 
-- **Status:** Proposed — §3 needs an operator decision
+- **Status:** Accepted — implemented (#54); hardware verification outstanding
+- **§3 decision:** (a) `identity_from_socket` config flag, default `true` (operator, 2026-10-20: "3: a)")
 - **Date:** 2026-10-20
 
 ## Context
@@ -86,7 +87,7 @@ Mirror the Go wire contract: every client-scoped response carries
 Silent ignoring is a measured support cost (the Go contract test says so in its own
 comment), not a security feature.
 
-### §3 — Trust modes: OPEN DECISION
+### §3 — Trust modes: DECIDED — (a)
 
 The socket-scoped default breaks a deployment where a proxy fronts the module and the
 proxy's address would become every client's identity. Two candidate designs:
