@@ -1,6 +1,8 @@
 # ADR-0006: Close the gate, and keep it open across restarts
 
-- **Status:** Proposed — needs a decision on §4 (durability) and §5 (sweep cadence)
+- **Status:** Accepted — implemented (#47) and measured on hardware (#49, #50)
+- **§4 decision:** 30s sweep interval (operator, 2026-10-19: "continue" on the proposal)
+- **§5 decision:** continuity — re-auth valid sessions at boot (operator, 2026-10-19)
 - **Date:** 2026-10-19
 
 ## Context

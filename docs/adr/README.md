@@ -15,7 +15,7 @@ reasoning is the point.
 | [0003](0003-v4-cbor-via-cdk-cli.md) | Decode V4 (CBOR) tokens via `cdk-cli`, not in-process | Accepted |
 | [0004](0004-corpus-fixtures-from-testnut.md) | Corpus fixtures come from a reachable mint, regenerable by script | Accepted |
 | [0005](0005-licence-undecided.md) | Licence remains undecided | Open — deliberately |
-| [0006](0006-gate-close-and-durability.md) | Close the gate, and keep it open across restarts | Proposed — §4/§5 need a decision |
+| [0006](0006-gate-close-and-durability.md) | Close the gate, and keep it open across restarts | Accepted — measured (#49, #50) |
 
 ## Writing one
 
