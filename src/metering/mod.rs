@@ -247,6 +247,8 @@ mod ndsctl_json_tests {
 pub enum GateOutcome {
     /// nodogsplash confirmed the client is authenticated.
     Opened,
+    /// nodogsplash confirmed deauthentication.
+    Closed,
     /// nodogsplash does not know this MAC: it has never sent HTTP through the managed
     /// interface. MEASURED 2026-10-19: `ndsctl auth <mac>` answers
     /// "Failed to authenticate client <mac>" for such a MAC, and `ndsctl clients` does not
@@ -307,6 +309,48 @@ pub async fn open_gate_with(ndsctl: impl AsRef<std::path::Path>, mac: &str) -> G
 /// Open the gate using the `ndsctl` on PATH.
 pub async fn open_gate(mac: &str) -> GateOutcome {
     open_gate_with("ndsctl", mac).await
+}
+
+/// The mirror of `classify_gate_output` for CLOSE operations.
+///
+/// ADR-0006 §2: for a close, "nodogsplash does not know this MAC" is SUCCESS — the
+/// gate is already as closed as it can be. Reading that as a failure would log every
+/// clean close of a vanished client as an error.
+pub fn classify_gate_close(success: bool, text: &str) -> GateOutcome {
+    let lower = text.to_lowercase();
+    // Measured on nodogsplash 5.0.2:
+    //   success: "Client <mac> deauthenticated."
+    //   unknown: "Client <mac> not found."
+    if lower.contains("not found") {
+        return GateOutcome::UnknownClient; // success for a close
+    }
+    if lower.contains("deauthenticated") && success {
+        return GateOutcome::Closed;
+    }
+    GateOutcome::Refused(text.trim().to_string())
+}
+
+/// Close the gate for `mac` (`ndsctl deauth <mac>`).
+pub async fn close_gate_with(ndsctl: impl AsRef<std::path::Path>, mac: &str) -> GateOutcome {
+    let out = tokio::process::Command::new(ndsctl.as_ref())
+        .args(["deauth", mac])
+        .output()
+        .await;
+    let out = match out {
+        Ok(o) => o,
+        Err(e) => return GateOutcome::Unavailable(e.to_string()),
+    };
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    classify_gate_close(out.status.success(), &text)
+}
+
+/// Close using the `ndsctl` on PATH.
+pub async fn close_gate(mac: &str) -> GateOutcome {
+    close_gate_with("ndsctl", mac).await
 }
 
 #[cfg(test)]

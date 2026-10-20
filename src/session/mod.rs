@@ -15,6 +15,25 @@ pub mod store;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// ADR-0006 §4: how often the gate-close sweep runs. 30s was the operator-accepted
+/// proposal: an overrun of up to one interval is a bounded, explainable loss, and each
+/// tick costs one ndsctl exec per terminal session.
+pub const SWEEP_INTERVAL_SECS: u64 = 30;
+
+/// ADR-0006 §1/§3: which sessions are TERMINAL (their gate must close) at sweep time.
+/// Pure decision over the map so it is testable without a router.
+/// Terminal = expired (expiry <= now) or exhausted (used >= allotment).
+pub fn terminal_sessions(
+    sessions: &std::collections::HashMap<String, CustomerSession>,
+    now: u64,
+) -> Vec<String> {
+    sessions
+        .iter()
+        .filter(|(_, s)| s.expiry <= now || s.used >= s.allotment)
+        .map(|(mac, _)| mac.clone())
+        .collect()
+}
+
 pub use store::{SessionStore, StoreError, StoredQuote};
 
 /// A single customer session keyed by MAC address.
@@ -169,6 +188,17 @@ impl SessionManager {
         session
     }
 
+    /// All sessions, cloned out. Used by the boot-time continuity restore, which must
+    /// not hold the lock while awaiting ndsctl.
+    pub fn snapshot(&self) -> Vec<CustomerSession> {
+        self.sessions.values().cloned().collect()
+    }
+
+    /// A live reference to the session map, for the sweep's terminal-sessions filter.
+    pub fn map_ref(&self) -> &HashMap<String, CustomerSession> {
+        &self.sessions
+    }
+
     /// Look up a session by MAC address.
     pub fn get_session(&self, mac: &str) -> Option<&CustomerSession> {
         self.sessions.get(mac)
@@ -312,6 +342,11 @@ impl SessionManager {
         }
     }
 
+    /// Terminal-transition flush, callable from the sweep (ADR-0006 + ADR-0002).
+    pub fn flush_for_sweep(&mut self, mac: &str) {
+        self.flush_usage(mac);
+    }
+
     /// Write the pending usage for `mac` immediately, if any.
     ///
     /// Called by every terminal transition (revoke / expire / close) so the persisted
@@ -370,3 +405,6 @@ mod usage_batching_test;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod gate_close_test;

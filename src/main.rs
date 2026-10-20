@@ -143,6 +143,132 @@ async fn main() {
         axum::serve(listener, app).await.expect("HTTP server error");
     });
 
+    // ADR-0006 §5 (continuity): a module restart is our fault, not the customer's.
+    // Restore the gate for every still-valid session: deauth first to clear any state
+    // that a module-only restart left behind, then auth to re-open it. Sessions that
+    // expired or exhausted while down are closed by close_expired() at open() time and
+    // are deliberately NOT re-authed.
+    {
+        let sessions = state.sessions.lock().await;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let valid: Vec<String> = sessions
+            .snapshot()
+            .into_iter()
+            .filter(|s| s.expiry > now && s.used < s.allotment)
+            .map(|s| s.mac)
+            .collect();
+        drop(sessions);
+        for mac in &valid {
+            let _ = tollgate_module_basic_rust::metering::close_gate(mac).await; // clear stale state
+            match tollgate_module_basic_rust::metering::open_gate(mac).await {
+                tollgate_module_basic_rust::metering::GateOutcome::Opened => {
+                    tracing::info!(mac = %mac, "restored gate for valid session at boot")
+                }
+                other => tracing::warn!(
+                    mac = %mac,
+                    outcome = ?other,
+                    "could not restore gate at boot; client will re-trigger the portal"
+                ),
+            }
+        }
+        if !valid.is_empty() {
+            tracing::info!(count = valid.len(), "boot continuity: gates re-opened");
+        }
+    }
+
+    // ADR-0006 §1/§3/§4: periodic gate-close sweep. Before this, close_expired ran
+    // ONLY at startup, so a session could expire or exhaust while the daemon ran and
+    // the client kept the access it paid for. The sweep closes terminal sessions and
+    // their gates every 30s (operator-accepted interval).
+    let sweep_state = state.clone();
+    let sweep_handle = tokio::spawn(async move {
+        let mut tick =
+            tokio::time::interval(std::time::Duration::from_secs(session::SWEEP_INTERVAL_SECS));
+        // The first tick fires immediately; that is fine — it is a no-op when nothing
+        // is terminal, and it closes anything that slipped in during startup.
+        loop {
+            tick.tick().await;
+            // STEP 1: snapshot the active sessions WITHOUT live counters. The
+            // in-memory `used` is only ever a fallback — the truth lives in
+            // nodogsplash — so exhaustion can ONLY be detected after syncing the
+            // live counters in. Without this sync the sweep never saw exhaustion:
+            // `used` stayed 0 in memory while the client had transferred bytes.
+            // (Same silent-zero class as #40/#42/#43; found by measuring on A04E.)
+            let (active, now) = {
+                let sessions = sweep_state.sessions.lock().await;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                let active: Vec<(String, u64, u64, u64)> = sessions
+                    .map_ref()
+                    .iter()
+                    .filter(|(_, s)| s.expiry > now && s.used < s.allotment)
+                    .map(|(mac, s)| (mac.clone(), s.allotment, s.used, s.expiry))
+                    .collect();
+                (active, now)
+            };
+
+            // STEP 2: poll live usage per active session, OUTSIDE the lock. One
+            // ndsctl exec per active session per tick — cheap, and the exec is
+            // already the metering mechanism.
+            let mut live_readings: Vec<(String, u64)> = Vec::with_capacity(active.len());
+            for (mac, _allotment, _used, _expiry) in &active {
+                match tollgate_module_basic_rust::metering::poll_usage_reading(mac).await {
+                    Ok(r) => live_readings.push((mac.clone(), r.used)),
+                    Err(e) => {
+                        // Absence is NOT zero: if ndsctl has no record we keep the
+                        // stored counter rather than pretending the client
+                        // transferred nothing (or something it did not).
+                        tracing::debug!(mac = %mac, error = %e, "sweep: no live reading, keeping stored counter");
+                    }
+                }
+            }
+
+            // STEP 3: write the live counters back, THEN decide terminal. Only now
+            // can `used >= allotment` be true from real traffic.
+            let terminal = {
+                let mut sessions = sweep_state.sessions.lock().await;
+                for (mac, used) in &live_readings {
+                    sessions.update_usage(mac, *used);
+                }
+                let terminal = session::terminal_sessions(sessions.map_ref(), now);
+                for mac in &terminal {
+                    // Flush the exact final usage BEFORE removing the row: the
+                    // terminal value is what a dispute would be settled against
+                    // (ADR-0002).
+                    sessions.flush_for_sweep(mac);
+                    sessions.revoke_session(mac);
+                }
+                terminal
+            };
+            if terminal.is_empty() {
+                continue;
+            }
+            // Close the gates AFTER releasing the lock: ndsctl exec must never hold
+            // the session mutex, or a slow deauth stalls every HTTP handler.
+            for mac in &terminal {
+                match tollgate_module_basic_rust::metering::close_gate(mac).await {
+                    tollgate_module_basic_rust::metering::GateOutcome::Closed => {
+                        tracing::info!(mac = %mac, "gate closed for terminal session")
+                    }
+                    tollgate_module_basic_rust::metering::GateOutcome::UnknownClient => {
+                        // SUCCESS for a close: nodogsplash already forgot this client.
+                        tracing::debug!(mac = %mac, "gate already closed (client unknown)")
+                    }
+                    other => {
+                        // §2: never propagate. Log with the tool's own words; the next
+                        // sweep retries. A quiet leak gets a counter, not a failure.
+                        tracing::warn!(mac = %mac, outcome = ?other, "gate close failed; will retry next sweep");
+                    }
+                }
+            }
+        }
+    });
+
     let cli_state = state.clone();
     let cli_handle = tokio::spawn(async move {
         if let Err(e) = cli::serve(cli_state).await {
